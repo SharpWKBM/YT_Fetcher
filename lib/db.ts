@@ -1,4 +1,9 @@
-import { sql } from '@vercel/postgres';
+import { createClient } from '@libsql/client';
+
+const client = createClient({
+  url: process.env.TURSO_DATABASE_URL!,
+  authToken: process.env.TURSO_AUTH_TOKEN!,
+});
 
 export interface Channel {
   id: string;
@@ -13,7 +18,7 @@ export interface Channel {
 }
 
 export async function initDatabase() {
-  await sql`
+  await client.execute(`
     CREATE TABLE IF NOT EXISTS channels (
       id TEXT PRIMARY KEY,
       title TEXT NOT NULL,
@@ -25,26 +30,38 @@ export async function initDatabase() {
       thumbnail_url TEXT,
       fetched_at TEXT DEFAULT CURRENT_TIMESTAMP
     )
-  `;
+  `);
 
-  await sql`CREATE INDEX IF NOT EXISTS idx_subscribers ON channels(subscribers DESC)`;
-  await sql`CREATE INDEX IF NOT EXISTS idx_last_upload ON channels(last_upload_date)`;
-  await sql`CREATE INDEX IF NOT EXISTS idx_language ON channels(language)`;
+  await client.execute(`CREATE INDEX IF NOT EXISTS idx_subscribers ON channels(subscribers DESC)`);
+  await client.execute(`CREATE INDEX IF NOT EXISTS idx_last_upload ON channels(last_upload_date)`);
+  await client.execute(`CREATE INDEX IF NOT EXISTS idx_language ON channels(language)`);
 }
 
 export async function insertChannel(channel: Omit<Channel, 'fetched_at'>) {
-  await sql`
-    INSERT INTO channels (id, title, subscribers, language, region, last_upload_date, channel_url, thumbnail_url)
-    VALUES (${channel.id}, ${channel.title}, ${channel.subscribers}, ${channel.language}, ${channel.region}, ${channel.last_upload_date}, ${channel.channel_url}, ${channel.thumbnail_url})
-    ON CONFLICT (id) DO UPDATE SET
-      title = EXCLUDED.title,
-      subscribers = EXCLUDED.subscribers,
-      language = EXCLUDED.language,
-      region = EXCLUDED.region,
-      last_upload_date = EXCLUDED.last_upload_date,
-      thumbnail_url = EXCLUDED.thumbnail_url,
-      fetched_at = CURRENT_TIMESTAMP
-  `;
+  await client.execute({
+    sql: `
+      INSERT INTO channels (id, title, subscribers, language, region, last_upload_date, channel_url, thumbnail_url)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+      ON CONFLICT (id) DO UPDATE SET
+        title = excluded.title,
+        subscribers = excluded.subscribers,
+        language = excluded.language,
+        region = excluded.region,
+        last_upload_date = excluded.last_upload_date,
+        thumbnail_url = excluded.thumbnail_url,
+        fetched_at = CURRENT_TIMESTAMP
+    `,
+    args: [
+      channel.id,
+      channel.title,
+      channel.subscribers,
+      channel.language,
+      channel.region,
+      channel.last_upload_date,
+      channel.channel_url,
+      channel.thumbnail_url,
+    ],
+  });
 }
 
 export interface ChannelFilters {
@@ -77,52 +94,39 @@ export async function getChannels(filters: ChannelFilters = {}) {
   inactiveDate.setMonth(inactiveDate.getMonth() - inactiveMonths);
   const inactiveDateStr = inactiveDate.toISOString().split('T')[0];
 
-  // Build ORDER BY clause safely
   const orderByClause = sortBy === 'subscribers'
     ? `subscribers ${order}`
     : `last_upload_date ${order}`;
 
-  const query = `
-    SELECT * FROM channels
-    WHERE subscribers >= $1
-      AND subscribers <= $2
-      AND (language = $3 OR language IS NULL)
-      AND (region = $4 OR region IS NULL)
-      AND (last_upload_date IS NULL OR last_upload_date <= $5)
-    ORDER BY ${orderByClause}
-    LIMIT $6 OFFSET $7
-  `;
+  const result = await client.execute({
+    sql: `
+      SELECT * FROM channels
+      WHERE subscribers >= ?
+        AND subscribers <= ?
+        AND (language = ? OR language IS NULL)
+        AND (region = ? OR region IS NULL)
+        AND (last_upload_date IS NULL OR last_upload_date <= ?)
+      ORDER BY ${orderByClause}
+      LIMIT ? OFFSET ?
+    `,
+    args: [minSubs, maxSubs, language, region, inactiveDateStr, limit, offset],
+  });
 
-  const result = await sql.query(query, [
-    minSubs,
-    maxSubs,
-    language,
-    region,
-    inactiveDateStr,
-    limit,
-    offset,
-  ]);
-
-  const countQuery = `
-    SELECT COUNT(*) as total FROM channels
-    WHERE subscribers >= $1
-      AND subscribers <= $2
-      AND (language = $3 OR language IS NULL)
-      AND (region = $4 OR region IS NULL)
-      AND (last_upload_date IS NULL OR last_upload_date <= $5)
-  `;
-
-  const countResult = await sql.query(countQuery, [
-    minSubs,
-    maxSubs,
-    language,
-    region,
-    inactiveDateStr,
-  ]);
+  const countResult = await client.execute({
+    sql: `
+      SELECT COUNT(*) as total FROM channels
+      WHERE subscribers >= ?
+        AND subscribers <= ?
+        AND (language = ? OR language IS NULL)
+        AND (region = ? OR region IS NULL)
+        AND (last_upload_date IS NULL OR last_upload_date <= ?)
+    `,
+    args: [minSubs, maxSubs, language, region, inactiveDateStr],
+  });
 
   return {
-    channels: result.rows as Channel[],
-    total: parseInt(countResult.rows[0].total as string),
+    channels: result.rows as unknown as Channel[],
+    total: Number(countResult.rows[0].total),
     page,
     limit,
   };
