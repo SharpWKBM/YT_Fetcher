@@ -18,23 +18,35 @@ export interface YouTubeChannel {
 
 export async function searchRussianChannels(maxResults: number = 50): Promise<YouTubeChannel[]> {
   try {
-    const searchResponse = await youtube.search.list({
-      part: ['snippet'],
-      type: ['channel'],
-      regionCode: 'RU',
-      relevanceLanguage: 'ru',
-      maxResults,
-      order: 'viewCount',
-    });
+    // Search for popular Russian-language channels
+    // Using broad search terms to find various channels
+    const searchQueries = ['влог', 'обзор', 'игры', 'музыка', 'новости'];
+    const allChannelIds = new Set<string>();
 
-    if (!searchResponse.data.items) {
-      return [];
+    for (const query of searchQueries) {
+      const searchResponse = await youtube.search.list({
+        part: ['snippet'],
+        type: ['channel'],
+        q: query,
+        regionCode: 'RU',
+        relevanceLanguage: 'ru',
+        maxResults: Math.ceil(maxResults / searchQueries.length),
+        order: 'viewCount',
+      });
+
+      if (searchResponse.data.items) {
+        searchResponse.data.items.forEach(item => {
+          if (item.id?.channelId) {
+            allChannelIds.add(item.id.channelId);
+          }
+        });
+      }
+
+      // Stop if we have enough channels
+      if (allChannelIds.size >= maxResults) break;
     }
 
-    const channelIds = searchResponse.data.items
-      .map(item => item.id?.channelId)
-      .filter(Boolean) as string[];
-
+    const channelIds = Array.from(allChannelIds).slice(0, maxResults);
     return await getChannelDetails(channelIds);
   } catch (error) {
     console.error('Error searching Russian channels:', error);
