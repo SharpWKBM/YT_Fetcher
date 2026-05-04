@@ -1,5 +1,6 @@
 import { useState, useEffect } from 'react';
 import Head from 'next/head';
+import { useSession, signIn, signOut } from 'next-auth/react';
 
 interface Channel {
   id: string;
@@ -22,12 +23,19 @@ interface ApiResponse {
     total: number;
     totalPages: number;
   };
+  userTier?: string;
+  channelsViewedThisMonth?: number;
+  tierLimit?: number;
 }
 
 export default function Home() {
+  const { data: session, status } = useSession();
   const [channels, setChannels] = useState<Channel[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [userTier, setUserTier] = useState<string>('free');
+  const [channelsViewed, setChannelsViewed] = useState(0);
+  const [tierLimit, setTierLimit] = useState(10);
 
   // Filters
   const [minSubs, setMinSubs] = useState(10000);
@@ -40,8 +48,10 @@ export default function Home() {
   const [total, setTotal] = useState(0);
 
   useEffect(() => {
-    fetchChannels();
-  }, [minSubs, maxSubs, inactiveMonths, sortBy, order, page]);
+    if (status !== 'loading') {
+      fetchChannels();
+    }
+  }, [minSubs, maxSubs, inactiveMonths, sortBy, order, page, status]);
 
   const fetchChannels = async () => {
     setLoading(true);
@@ -67,6 +77,9 @@ export default function Home() {
         setChannels(data.data);
         setTotalPages(data.pagination.totalPages);
         setTotal(data.pagination.total);
+        if (data.userTier) setUserTier(data.userTier);
+        if (data.channelsViewedThisMonth !== undefined) setChannelsViewed(data.channelsViewedThisMonth);
+        if (data.tierLimit) setTierLimit(data.tierLimit);
       } else {
         setError('Failed to fetch channels');
       }
@@ -101,6 +114,18 @@ export default function Home() {
     });
   };
 
+  const getTierBadgeColor = (tier: string) => {
+    switch (tier) {
+      case 'enterprise': return '#7c3aed';
+      case 'pro': return '#2563eb';
+      default: return '#64748b';
+    }
+  };
+
+  const getTierName = (tier: string) => {
+    return tier.charAt(0).toUpperCase() + tier.slice(1);
+  };
+
   return (
     <>
       <Head>
@@ -110,10 +135,107 @@ export default function Home() {
       </Head>
 
       <main style={{ padding: '20px', maxWidth: '1400px', margin: '0 auto', fontFamily: 'system-ui, -apple-system, sans-serif' }}>
-        <h1 style={{ marginBottom: '10px' }}>YouTube Channel Finder</h1>
+        {/* Header with Auth */}
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '10px' }}>
+          <h1 style={{ margin: 0 }}>YouTube Channel Finder</h1>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '15px' }}>
+            {session ? (
+              <>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+                  <span style={{
+                    background: getTierBadgeColor(userTier),
+                    color: 'white',
+                    padding: '4px 12px',
+                    borderRadius: '12px',
+                    fontSize: '12px',
+                    fontWeight: '600'
+                  }}>
+                    {getTierName(userTier)}
+                  </span>
+                  <span style={{ fontSize: '14px', color: '#666' }}>
+                    {channelsViewed}/{tierLimit === Infinity ? '∞' : tierLimit} viewed
+                  </span>
+                </div>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+                  {session.user?.image && (
+                    <img
+                      src={session.user.image}
+                      alt={session.user.name || 'User'}
+                      style={{ width: '32px', height: '32px', borderRadius: '50%' }}
+                    />
+                  )}
+                  <span style={{ fontSize: '14px' }}>{session.user?.name}</span>
+                  <button
+                    onClick={() => signOut()}
+                    style={{
+                      padding: '6px 12px',
+                      borderRadius: '4px',
+                      border: '1px solid #ccc',
+                      background: 'white',
+                      cursor: 'pointer',
+                      fontSize: '14px'
+                    }}
+                  >
+                    Sign Out
+                  </button>
+                </div>
+              </>
+            ) : (
+              <button
+                onClick={() => signIn()}
+                style={{
+                  padding: '8px 16px',
+                  borderRadius: '4px',
+                  border: 'none',
+                  background: '#2563eb',
+                  color: 'white',
+                  cursor: 'pointer',
+                  fontSize: '14px',
+                  fontWeight: '500'
+                }}
+              >
+                Sign In
+              </button>
+            )}
+          </div>
+        </div>
+
         <p style={{ color: '#666', marginBottom: '30px' }}>
           Find undervalued Russian-speaking channels with high subscribers but inactive uploads
         </p>
+
+        {/* Tier Upgrade Banner */}
+        {session && userTier === 'free' && channelsViewed >= tierLimit && (
+          <div style={{
+            background: 'linear-gradient(135deg, #667eea 0%, #764ba2 100%)',
+            color: 'white',
+            padding: '20px',
+            borderRadius: '8px',
+            marginBottom: '20px',
+            display: 'flex',
+            justifyContent: 'space-between',
+            alignItems: 'center'
+          }}>
+            <div>
+              <h3 style={{ margin: '0 0 5px 0' }}>Upgrade to Pro</h3>
+              <p style={{ margin: 0, opacity: 0.9 }}>
+                You've reached your free tier limit. Upgrade to view 100 channels/month + advanced features.
+              </p>
+            </div>
+            <button style={{
+              padding: '10px 20px',
+              borderRadius: '4px',
+              border: 'none',
+              background: 'white',
+              color: '#667eea',
+              cursor: 'pointer',
+              fontWeight: '600',
+              whiteSpace: 'nowrap'
+            }}>
+              Upgrade - $29/mo
+            </button>
+          </div>
+        )}
 
         {/* Filters */}
         <div style={{
@@ -190,7 +312,9 @@ export default function Home() {
             width: '100%',
             borderCollapse: 'collapse',
             background: 'white',
-            boxShadow: '0 1px 3px rgba(0,0,0,0.1)'
+            boxShadow: '0 1px 3px rgba(0,0,0,0.1)',
+            borderRadius: '8px',
+            overflow: 'hidden'
           }}>
             <thead>
               <tr style={{ background: '#f9f9f9', borderBottom: '2px solid #ddd' }}>
@@ -240,7 +364,16 @@ export default function Home() {
                     {formatDate(channel.last_upload_date)}
                   </td>
                   <td style={{ padding: '12px', textAlign: 'center' }}>
-                    {channel.monthsInactive !== null ? `${channel.monthsInactive} mo` : 'N/A'}
+                    <span style={{
+                      background: channel.monthsInactive && channel.monthsInactive >= 12 ? '#fee' : '#eff6ff',
+                      color: channel.monthsInactive && channel.monthsInactive >= 12 ? '#c00' : '#2563eb',
+                      padding: '4px 8px',
+                      borderRadius: '4px',
+                      fontSize: '13px',
+                      fontWeight: '500'
+                    }}>
+                      {channel.monthsInactive !== null ? `${channel.monthsInactive} mo` : 'N/A'}
+                    </span>
                   </td>
                   <td style={{ padding: '12px', textAlign: 'center' }}>
                     {channel.language?.toUpperCase() || 'RU'}
@@ -291,6 +424,20 @@ export default function Home() {
             </button>
           </div>
         )}
+
+        {/* Footer */}
+        <div style={{
+          marginTop: '60px',
+          paddingTop: '20px',
+          borderTop: '1px solid #eee',
+          textAlign: 'center',
+          color: '#666',
+          fontSize: '14px'
+        }}>
+          <p>
+            <strong>Pricing:</strong> Free (10 channels/mo) • Pro $29/mo (100 channels/mo) • Enterprise $99/mo (Unlimited)
+          </p>
+        </div>
       </main>
     </>
   );

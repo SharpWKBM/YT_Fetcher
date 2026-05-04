@@ -35,6 +35,22 @@ export async function initDatabase() {
   await client.execute(`CREATE INDEX IF NOT EXISTS idx_subscribers ON channels(subscribers DESC)`);
   await client.execute(`CREATE INDEX IF NOT EXISTS idx_last_upload ON channels(last_upload_date)`);
   await client.execute(`CREATE INDEX IF NOT EXISTS idx_language ON channels(language)`);
+
+  // Initialize users table
+  await client.execute(`
+    CREATE TABLE IF NOT EXISTS users (
+      id TEXT PRIMARY KEY,
+      email TEXT UNIQUE NOT NULL,
+      name TEXT,
+      tier TEXT DEFAULT 'free' CHECK(tier IN ('free', 'pro', 'enterprise')),
+      channels_viewed_this_month INTEGER DEFAULT 0,
+      created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+      updated_at TEXT DEFAULT CURRENT_TIMESTAMP
+    )
+  `);
+
+  await client.execute(`CREATE INDEX IF NOT EXISTS idx_user_email ON users(email)`);
+  await client.execute(`CREATE INDEX IF NOT EXISTS idx_user_tier ON users(tier)`);
 }
 
 export async function insertChannel(channel: Omit<Channel, 'fetched_at'>) {

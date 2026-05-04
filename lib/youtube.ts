@@ -1,9 +1,30 @@
 import { google } from 'googleapis';
 
-const youtube = google.youtube({
-  version: 'v3',
-  auth: process.env.YOUTUBE_API_KEY,
-});
+// API Key rotation system - supports multiple keys for 5x quota
+const API_KEYS = [
+  process.env.YOUTUBE_API_KEY,
+  process.env.YOUTUBE_API_KEY_2,
+  process.env.YOUTUBE_API_KEY_3,
+  process.env.YOUTUBE_API_KEY_4,
+  process.env.YOUTUBE_API_KEY_5,
+].filter(Boolean);
+
+let currentKeyIndex = 0;
+
+function getYouTubeClient() {
+  const apiKey = API_KEYS[currentKeyIndex % API_KEYS.length];
+  return google.youtube({
+    version: 'v3',
+    auth: apiKey,
+  });
+}
+
+function rotateApiKey() {
+  currentKeyIndex = (currentKeyIndex + 1) % API_KEYS.length;
+  console.log(`[YouTube API] Rotated to key ${currentKeyIndex + 1}/${API_KEYS.length}`);
+}
+
+const youtube = getYouTubeClient();
 
 export interface YouTubeChannel {
   id: string;
@@ -33,29 +54,59 @@ export async function searchRussianChannels(maxResults: number = 50): Promise<Yo
     const allChannelIds = new Set<string>();
 
     for (const query of searchQueries) {
-      // Search for videos from 2015-2020 to find channels that were active then
-      const searchResponse = await youtube.search.list({
-        part: ['snippet'],
-        type: ['video'],
-        q: query,
-        regionCode: 'RU',
-        relevanceLanguage: 'ru',
-        maxResults: Math.ceil(maxResults / searchQueries.length),
-        publishedAfter: '2015-01-01T00:00:00Z',
-        publishedBefore: '2020-12-31T23:59:59Z',
-        order: 'viewCount',
-      });
-
-      if (searchResponse.data.items) {
-        searchResponse.data.items.forEach(item => {
-          if (item.snippet?.channelId) {
-            allChannelIds.add(item.snippet.channelId);
-          }
+      try {
+        // Search for videos from 2015-2020 to find channels that were active then
+        const searchResponse = await youtube.search.list({
+          part: ['snippet'],
+          type: ['video'],
+          q: query,
+          regionCode: 'RU',
+          relevanceLanguage: 'ru',
+          maxResults: Math.ceil(maxResults / searchQueries.length),
+          publishedAfter: '2015-01-01T00:00:00Z',
+          publishedBefore: '2020-12-31T23:59:59Z',
+          order: 'viewCount',
         });
-      }
 
-      // Stop if we have enough channels
-      if (allChannelIds.size >= maxResults) break;
+        if (searchResponse.data.items) {
+          searchResponse.data.items.forEach(item => {
+            if (item.snippet?.channelId) {
+              allChannelIds.add(item.snippet.channelId);
+            }
+          });
+        }
+
+        // Stop if we have enough channels
+        if (allChannelIds.size >= maxResults) break;
+      } catch (error: any) {
+        // If quota exceeded, rotate to next API key and retry
+        if (error?.code === 403 && error?.message?.includes('quota')) {
+          console.log(`[YouTube API] Quota exceeded, rotating key...`);
+          rotateApiKey();
+          // Retry this query with new key
+          const retryResponse = await getYouTubeClient().search.list({
+            part: ['snippet'],
+            type: ['video'],
+            q: query,
+            regionCode: 'RU',
+            relevanceLanguage: 'ru',
+            maxResults: Math.ceil(maxResults / searchQueries.length),
+            publishedAfter: '2015-01-01T00:00:00Z',
+            publishedBefore: '2020-12-31T23:59:59Z',
+            order: 'viewCount',
+          });
+
+          if (retryResponse.data.items) {
+            retryResponse.data.items.forEach(item => {
+              if (item.snippet?.channelId) {
+                allChannelIds.add(item.snippet.channelId);
+              }
+            });
+          }
+        } else {
+          throw error;
+        }
+      }
     }
 
     const channelIds = Array.from(allChannelIds).slice(0, maxResults);
@@ -70,7 +121,7 @@ export async function getChannelDetails(channelIds: string[]): Promise<YouTubeCh
   if (channelIds.length === 0) return [];
 
   try {
-    const channelsResponse = await youtube.channels.list({
+    const channelsResponse = await getYouTubeClient().channels.list({
       part: ['snippet', 'statistics', 'contentDetails'],
       id: channelIds,
     });
@@ -93,7 +144,7 @@ export async function getChannelDetails(channelIds: string[]): Promise<YouTubeCh
       if (contentDetails.relatedPlaylists?.uploads) {
         const uploadsPlaylistId = contentDetails.relatedPlaylists.uploads;
         try {
-          const playlistResponse = await youtube.playlistItems.list({
+          const playlistResponse = await getYouTubeClient().playlistItems.list({
             part: ['snippet'],
             playlistId: uploadsPlaylistId,
             maxResults: 1,
@@ -105,8 +156,14 @@ export async function getChannelDetails(channelIds: string[]): Promise<YouTubeCh
               lastUploadDate = publishedAt.split('T')[0];
             }
           }
-        } catch (error) {
-          console.error(`Error fetching uploads for channel ${channelId}:`, error);
+        } catch (error: any) {
+          // If quota exceeded, rotate to next API key
+          if (error?.code === 403 && error?.message?.includes('quota')) {
+            console.log(`[YouTube API] Quota exceeded on playlist fetch, rotating key...`);
+            rotateApiKey();
+          } else {
+            console.error(`Error fetching uploads for channel ${channelId}:`, error);
+          }
         }
       }
 
@@ -123,7 +180,38 @@ export async function getChannelDetails(channelIds: string[]): Promise<YouTubeCh
     }
 
     return channels;
-  } catch (error) {
+  } catch (error: any) {
+    // If quota exceeded on main channels.list call, rotate and retry
+    if (error?.code === 403 && error?.message?.includes('quota')) {
+      console.log(`[YouTube API] Quota exceeded on channels.list, rotating key and retrying...`);
+      rotateApiKey();
+
+      try {
+        const retryResponse = await getYouTubeClient().channels.list({
+          part: ['snippet', 'statistics', 'contentDetails'],
+          id: channelIds,
+        });
+
+        if (!retryResponse.data.items) return [];
+
+        const channels: YouTubeChannel[] = retryResponse.data.items.map(channel => ({
+          id: channel.id!,
+          title: channel.snippet?.title || 'Unknown',
+          subscribers: parseInt(channel.statistics?.subscriberCount || '0'),
+          language: channel.snippet?.defaultLanguage || 'ru',
+          region: channel.snippet?.country || 'CIS',
+          lastUploadDate: null,
+          channelUrl: `https://www.youtube.com/channel/${channel.id}`,
+          thumbnailUrl: channel.snippet?.thumbnails?.default?.url || null,
+        }));
+
+        return channels;
+      } catch (retryError) {
+        console.error('Error fetching channel details after retry:', retryError);
+        return [];
+      }
+    }
+
     console.error('Error fetching channel details:', error);
     return [];
   }
