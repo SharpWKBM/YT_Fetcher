@@ -17,8 +17,8 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     // Initialize database if needed
     await initDatabase();
 
-    // Fetch channels from YouTube API
-    const channels = await searchRussianChannels(50);
+    // Fetch more channels (increased from 50 to 200)
+    const channels = await searchRussianChannels(200);
 
     // Store in database
     let inserted = 0;
