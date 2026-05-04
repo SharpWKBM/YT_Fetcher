@@ -40,22 +40,24 @@ export interface YouTubeChannel {
 export async function searchRussianChannels(maxResults: number = 50): Promise<YouTubeChannel[]> {
   try {
     // Search for Russian-language channels using multiple strategies
-    // Strategy: Search for older videos (2015-2020) to find potentially abandoned channels
+    // Strategy: Search for videos from 2018-2023 to find potentially abandoned channels
     const searchQueries = [
-      'влог 2015',
-      'обзор 2016',
-      'игры 2017',
-      'музыка 2018',
-      'новости 2019',
-      'летсплей 2016',
-      'распаковка 2017',
-      'туториал 2018'
+      'влог',
+      'обзор',
+      'игры',
+      'летсплей',
+      'распаковка',
+      'туториал',
+      'реакция',
+      'челлендж',
+      'пранк',
+      'музыка'
     ];
     const allChannelIds = new Set<string>();
 
     for (const query of searchQueries) {
       try {
-        // Search for videos from 2015-2020 to find channels that were active then
+        // Search for videos from 2018-2023 to find channels that were active then
         const searchResponse = await youtube.search.list({
           part: ['snippet'],
           type: ['video'],
@@ -63,8 +65,8 @@ export async function searchRussianChannels(maxResults: number = 50): Promise<Yo
           regionCode: 'RU',
           relevanceLanguage: 'ru',
           maxResults: Math.ceil(maxResults / searchQueries.length),
-          publishedAfter: '2015-01-01T00:00:00Z',
-          publishedBefore: '2020-12-31T23:59:59Z',
+          publishedAfter: '2018-01-01T00:00:00Z',
+          publishedBefore: '2023-12-31T23:59:59Z',
           order: 'viewCount',
         });
 
@@ -91,8 +93,8 @@ export async function searchRussianChannels(maxResults: number = 50): Promise<Yo
             regionCode: 'RU',
             relevanceLanguage: 'ru',
             maxResults: Math.ceil(maxResults / searchQueries.length),
-            publishedAfter: '2015-01-01T00:00:00Z',
-            publishedBefore: '2020-12-31T23:59:59Z',
+            publishedAfter: '2018-01-01T00:00:00Z',
+            publishedBefore: '2023-12-31T23:59:59Z',
             order: 'viewCount',
           });
 
