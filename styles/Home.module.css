@@ -204,6 +204,44 @@
   min-width: 100px;
 }
 
+/* Favorite Button */
+.favoriteBtn {
+  background: none;
+  border: none;
+  font-size: 24px;
+  cursor: pointer;
+  color: #fbbf24;
+  transition: transform 0.2s ease;
+  padding: 4px;
+  line-height: 1;
+}
+
+.favoriteBtn:hover {
+  transform: scale(1.2);
+}
+
+.favoriteBtn:active {
+  transform: scale(0.9);
+}
+
+/* Remove Button */
+.removeBtn {
+  padding: 6px 12px;
+  border-radius: 6px;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+  border: 1px solid #ef4444;
+  background: white;
+  color: #ef4444;
+  transition: all 0.2s ease;
+}
+
+.removeBtn:hover {
+  background: #ef4444;
+  color: white;
+}
+
 /* Buttons */
 .btn {
   padding: 10px 20px;

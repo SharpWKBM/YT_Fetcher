@@ -52,6 +52,9 @@ export default function Home() {
   const [showSaveDialog, setShowSaveDialog] = useState(false);
   const [searchName, setSearchName] = useState('');
 
+  // Favorites
+  const [favorites, setFavorites] = useState<Set<string>>(new Set());
+
   // Filters
   const [minSubs, setMinSubs] = useState(0);
   const [maxSubs, setMaxSubs] = useState(10000000);
@@ -265,8 +268,63 @@ export default function Home() {
   useEffect(() => {
     if (session) {
       fetchSavedSearches();
+      fetchFavorites();
     }
   }, [session]);
+
+  // Fetch favorites
+  const fetchFavorites = async () => {
+    if (!session) return;
+    try {
+      const response = await fetch('/api/favorites');
+      const data = await response.json();
+      if (data.favorites) {
+        const favoriteIds = new Set(data.favorites.map((f: any) => f.id));
+        setFavorites(favoriteIds);
+      }
+    } catch (error) {
+      console.error('Error fetching favorites:', error);
+    }
+  };
+
+  // Toggle favorite
+  const toggleFavorite = async (channelId: string) => {
+    if (!session) return;
+
+    const isFavorited = favorites.has(channelId);
+
+    try {
+      if (isFavorited) {
+        // Remove from favorites
+        const response = await fetch('/api/favorites', {
+          method: 'DELETE',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ channelId }),
+        });
+
+        if (response.ok) {
+          setFavorites(prev => {
+            const newSet = new Set(prev);
+            newSet.delete(channelId);
+            return newSet;
+          });
+        }
+      } else {
+        // Add to favorites
+        const response = await fetch('/api/favorites', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ channelId }),
+        });
+
+        if (response.ok) {
+          setFavorites(prev => new Set(prev).add(channelId));
+        }
+      }
+    } catch (error) {
+      console.error('Error toggling favorite:', error);
+    }
+  };
 
   return (
     <>
@@ -323,6 +381,12 @@ export default function Home() {
                     </div>
                   )}
                 </div>
+                <button
+                  onClick={() => window.location.href = '/favorites'}
+                  className={`${styles.btn} ${styles.btnSecondary}`}
+                >
+                  ⭐ My Favorites ({favorites.size})
+                </button>
                 <div className={styles.userInfo}>
                   {session.user?.image && (
                     <img
@@ -535,6 +599,7 @@ export default function Home() {
                 </th>
                 <th style={{ textAlign: 'center' }}>Inactive</th>
                 <th style={{ textAlign: 'center' }}>Language</th>
+                {session && <th style={{ textAlign: 'center', width: '60px' }}>Favorite</th>}
               </tr>
             </thead>
             <tbody>
@@ -560,11 +625,16 @@ export default function Home() {
                     <td>
                       <div className={`${styles.skeletonText} ${styles.skeletonTextShort} skeleton`}></div>
                     </td>
+                    {session && (
+                      <td>
+                        <div className={`${styles.skeletonText} ${styles.skeletonTextShort} skeleton`}></div>
+                      </td>
+                    )}
                   </tr>
                 ))
               ) : channels.length === 0 ? (
                 <tr>
-                  <td colSpan={5} style={{ textAlign: 'center', padding: '40px', color: '#64748b' }}>
+                  <td colSpan={session ? 6 : 5} style={{ textAlign: 'center', padding: '40px', color: '#64748b' }}>
                     No channels found. Try adjusting your filters.
                   </td>
                 </tr>
@@ -604,6 +674,17 @@ export default function Home() {
                     <td style={{ textAlign: 'center' }}>
                       {channel.language?.toUpperCase() || 'RU'}
                     </td>
+                    {session && (
+                      <td style={{ textAlign: 'center' }}>
+                        <button
+                          onClick={() => toggleFavorite(channel.id)}
+                          className={styles.favoriteBtn}
+                          title={favorites.has(channel.id) ? 'Remove from favorites' : 'Add to favorites'}
+                        >
+                          {favorites.has(channel.id) ? '★' : '☆'}
+                        </button>
+                      </td>
+                    )}
                   </tr>
                 ))
               )}
