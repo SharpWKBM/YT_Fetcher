@@ -1,6 +1,6 @@
 import type { NextApiRequest, NextApiResponse } from 'next';
 import { initDatabase, insertChannel } from '@/lib/db';
-import { searchRussianChannels } from '@/lib/youtube';
+import { discoverChannelsAllRegions } from '@/lib/scrapers/channel-discovery';
 
 export default async function handler(req: NextApiRequest, res: NextApiResponse) {
   if (req.method !== 'POST') {
@@ -17,8 +17,8 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     // Initialize database if needed
     await initDatabase();
 
-    // Fetch more channels (increased from 50 to 200)
-    const channels = await searchRussianChannels(200);
+    // Discover channels across all regions (3 channels per region = 27 total)
+    const channels = await discoverChannelsAllRegions(3);
 
     // Store in database
     let inserted = 0;
