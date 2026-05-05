@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react';
-import Head from 'next/head';
 import { useSession, signIn, signOut } from 'next-auth/react';
+import Meta from '@/components/SEO/Meta';
 import styles from '@/styles/Home.module.css';
 import ChannelCardV2 from '@/components/ChannelCard/ChannelCardV2';
 
@@ -329,11 +329,25 @@ export default function Home() {
 
   return (
     <>
-      <Head>
-        <title>YouTube Channel Finder - Discover Abandoned Channels</title>
-        <meta name="description" content="Find inactive YouTube channels with high subscriber counts in the Russian-speaking market" />
-        <meta name="viewport" content="width=device-width, initial-scale=1" />
-      </Head>
+      <Meta
+        title="Find Inactive YouTube Channels for Sale | YouTube Channel Finder"
+        description="Discover abandoned YouTube channels with 10K-1M+ subscribers. Filter by niche, language, and inactivity. Perfect for channel acquisition and growth opportunities."
+        schema={{
+          "@context": "https://schema.org",
+          "@type": "WebApplication",
+          "name": "YouTube Channel Finder",
+          "description": "Discover inactive YouTube channels with high subscriber counts for acquisition opportunities",
+          "url": process.env.NEXT_PUBLIC_BASE_URL || "https://yourdomain.com",
+          "applicationCategory": "BusinessApplication",
+          "offers": {
+            "@type": "AggregateOffer",
+            "priceCurrency": "USD",
+            "lowPrice": "0",
+            "highPrice": "99",
+            "offerCount": "3"
+          }
+        }}
+      />
 
       <main className={styles.container}>
         {/* Header */}

@@ -1,0 +1,26 @@
+# YouTube Channel Finder - Robots.txt
+# Updated: 2026-05-05
+
+User-agent: *
+Allow: /
+Disallow: /api/
+Disallow: /dashboard/
+Disallow: /favorites
+Disallow: /profile/
+Disallow: /subscription
+
+# Allow public pages
+Allow: /channels/
+Allow: /browse/
+Allow: /pricing
+Allow: /features
+
+# Sitemap
+Sitemap: https://yourdomain.com/sitemap.xml
+
+# Crawl-delay for aggressive bots
+User-agent: AhrefsBot
+Crawl-delay: 10
+
+User-agent: SemrushBot
+Crawl-delay: 10
