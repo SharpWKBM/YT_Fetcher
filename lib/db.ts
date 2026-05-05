@@ -15,6 +15,14 @@ export interface Channel {
   channel_url: string;
   thumbnail_url: string | null;
   fetched_at: string;
+  tags?: string | null;
+  niche?: string | null;
+  social_links?: string | null;
+  is_blacklisted?: number;
+  blacklist_reason?: string | null;
+  video_count?: number | null;
+  avg_views?: number | null;
+  engagement_rate?: number | null;
 }
 
 export async function initDatabase() {
@@ -45,7 +53,17 @@ export async function initDatabase() {
       tier TEXT DEFAULT 'free' CHECK(tier IN ('free', 'pro', 'enterprise')),
       channels_viewed_this_month INTEGER DEFAULT 0,
       created_at TEXT DEFAULT CURRENT_TIMESTAMP,
-      updated_at TEXT DEFAULT CURRENT_TIMESTAMP
+      updated_at TEXT DEFAULT CURRENT_TIMESTAMP,
+      avatar_url TEXT,
+      bio TEXT,
+      preferences TEXT,
+      email_verified INTEGER DEFAULT 0,
+      phone_number TEXT,
+      two_factor_enabled INTEGER DEFAULT 0,
+      two_factor_secret TEXT,
+      last_login_at TEXT,
+      login_attempts INTEGER DEFAULT 0,
+      locked_until TEXT
     )
   `);
 
@@ -81,6 +99,38 @@ export async function initDatabase() {
 
   await client.execute(`CREATE INDEX IF NOT EXISTS idx_favorite_user ON favorites(user_id)`);
   await client.execute(`CREATE INDEX IF NOT EXISTS idx_favorite_channel ON favorites(channel_id)`);
+
+  // Initialize channel_tags table
+  await client.execute(`
+    CREATE TABLE IF NOT EXISTS channel_tags (
+      id TEXT PRIMARY KEY,
+      channel_id TEXT NOT NULL,
+      tag TEXT NOT NULL,
+      created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+      FOREIGN KEY (channel_id) REFERENCES channels(id) ON DELETE CASCADE,
+      UNIQUE(channel_id, tag)
+    )
+  `);
+
+  await client.execute(`CREATE INDEX IF NOT EXISTS idx_tag_channel ON channel_tags(channel_id)`);
+  await client.execute(`CREATE INDEX IF NOT EXISTS idx_tag_name ON channel_tags(tag)`);
+
+  // Initialize channel_blacklist table
+  await client.execute(`
+    CREATE TABLE IF NOT EXISTS channel_blacklist (
+      id TEXT PRIMARY KEY,
+      channel_id TEXT NOT NULL,
+      user_id TEXT NOT NULL,
+      reason TEXT,
+      created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+      FOREIGN KEY (channel_id) REFERENCES channels(id) ON DELETE CASCADE,
+      FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
+      UNIQUE(channel_id, user_id)
+    )
+  `);
+
+  await client.execute(`CREATE INDEX IF NOT EXISTS idx_blacklist_user ON channel_blacklist(user_id)`);
+  await client.execute(`CREATE INDEX IF NOT EXISTS idx_blacklist_channel ON channel_blacklist(channel_id)`);
 }
 
 export async function insertChannel(channel: Omit<Channel, 'fetched_at'>) {
@@ -120,6 +170,14 @@ export interface ChannelFilters {
   order?: 'ASC' | 'DESC';
   page?: number;
   limit?: number;
+  niche?: string;
+  tags?: string[];
+  minVideoCount?: number;
+  maxVideoCount?: number;
+  minEngagementRate?: number;
+  hasSocialLinks?: boolean;
+  excludeBlacklisted?: boolean;
+  lastActivityRange?: '1-3mo' | '3-6mo' | '6-12mo' | '12-24mo' | '24+mo';
 }
 
 export async function getChannels(filters: ChannelFilters = {}) {

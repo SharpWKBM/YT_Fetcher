@@ -11,7 +11,7 @@ const API_KEYS = [
 
 let currentKeyIndex = 0;
 
-function getYouTubeClient() {
+export function getYouTubeClient() {
   const apiKey = API_KEYS[currentKeyIndex % API_KEYS.length];
   return google.youtube({
     version: 'v3',
@@ -19,7 +19,7 @@ function getYouTubeClient() {
   });
 }
 
-function rotateApiKey() {
+export function rotateApiKey() {
   currentKeyIndex = (currentKeyIndex + 1) % API_KEYS.length;
   console.log(`[YouTube API] Rotated to key ${currentKeyIndex + 1}/${API_KEYS.length}`);
 }

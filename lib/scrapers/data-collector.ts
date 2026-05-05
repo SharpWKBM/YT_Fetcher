@@ -1,6 +1,8 @@
 // lib/scrapers/data-collector.ts
 import { getChannelLastUpload, parseChannelRSS } from './rss-parser';
 import { ChannelData } from './types';
+import { extractChannelSocialLinks } from './social-link-extractor';
+import { classifyChannelNiche } from '../classifiers/niche-classifier';
 
 const REGION_CODES: Record<string, string> = {
   US: 'US',
@@ -36,6 +38,12 @@ export async function collectChannelData(channelId: string): Promise<ChannelData
       lastUploadDate = publishedDate.toISOString().split('T')[0];
     }
 
+    // Extract social links
+    const socialLinks = await extractChannelSocialLinks(channelId);
+
+    // Classify niche
+    const niche = classifyChannelNiche(feedData.channelTitle, '', []);
+
     return {
       id: channelId,
       title: feedData.channelTitle,
@@ -45,6 +53,9 @@ export async function collectChannelData(channelId: string): Promise<ChannelData
       lastUploadDate,
       channelUrl: `https://www.youtube.com/channel/${channelId}`,
       thumbnailUrl: null,
+      socialLinks: JSON.stringify(socialLinks),
+      niche,
+      videoCount: feedData.entries.length,
     };
   } catch (error) {
     console.error(`Error collecting data for channel ${channelId}:`, error);

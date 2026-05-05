@@ -279,7 +279,7 @@ export default function Home() {
       const response = await fetch('/api/favorites');
       const data = await response.json();
       if (data.favorites) {
-        const favoriteIds = new Set(data.favorites.map((f: any) => f.id));
+        const favoriteIds = new Set<string>(data.favorites.map((f: any) => String(f.id)));
         setFavorites(favoriteIds);
       }
     } catch (error) {

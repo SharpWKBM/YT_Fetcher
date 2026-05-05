@@ -42,7 +42,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
 
     // Fetch all channels from database
     const result = await client.execute('SELECT id, last_upload_date FROM channels');
-    const channels = result.rows as Array<{ id: string; last_upload_date: string | null }>;
+    const channels = result.rows as unknown as Array<{ id: string; last_upload_date: string | null }>;
 
     console.log(`[Monitoring] Found ${channels.length} channels to check`);
 

@@ -8,6 +8,9 @@ export interface ChannelData {
   lastUploadDate: string | null;
   channelUrl: string;
   thumbnailUrl: string | null;
+  socialLinks?: string;
+  niche?: string;
+  videoCount?: number;
 }
 
 export interface RSSFeedEntry {

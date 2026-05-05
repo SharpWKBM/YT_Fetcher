@@ -1,6 +1,6 @@
 import type { NextApiRequest, NextApiResponse } from 'next';
 import { initDatabase, insertChannel } from '@/lib/db';
-import { discoverChannelsAllRegions } from '@/lib/scrapers/channel-discovery';
+import { discoverChannelsMultiQuery } from '@/lib/youtube/advanced-search';
 
 export default async function handler(req: NextApiRequest, res: NextApiResponse) {
   if (req.method !== 'POST') {
@@ -17,8 +17,12 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     // Initialize database if needed
     await initDatabase();
 
-    // Discover channels across all regions (3 channels per region = 27 total)
-    const channels = await discoverChannelsAllRegions(3);
+    // Use new multi-query search to discover 1000 channels
+    const channels = await discoverChannelsMultiQuery({
+      minSubscribers: 10000,
+      maxSubscribers: 1000000,
+      inactiveMonths: 12
+    }, 1000);
 
     // Store in database
     let inserted = 0;

@@ -2,11 +2,7 @@
   "crons": [
     {
       "path": "/api/cron/fetch-channels",
-      "schedule": "0 2 * * 0"
-    },
-    {
-      "path": "/api/cron/monitor-channels",
-      "schedule": "0 */12 * * *"
+      "schedule": "0 2 * * *"
     }
   ]
 }
