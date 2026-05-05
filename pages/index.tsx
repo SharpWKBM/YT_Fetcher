@@ -39,9 +39,11 @@ export default function Home() {
   const [tierLimit, setTierLimit] = useState(10);
 
   // Filters
-  const [minSubs, setMinSubs] = useState(10000);
-  const [maxSubs, setMaxSubs] = useState(1000000);
-  const [inactiveMonths, setInactiveMonths] = useState(6);
+  const [minSubs, setMinSubs] = useState(0);
+  const [maxSubs, setMaxSubs] = useState(10000000);
+  const [language, setLanguage] = useState<string>('');
+  const [region, setRegion] = useState<string>('');
+  const [inactiveMonths, setInactiveMonths] = useState(0);
   const [sortBy, setSortBy] = useState<'subscribers' | 'last_upload_date'>('subscribers');
   const [order, setOrder] = useState<'ASC' | 'DESC'>('DESC');
   const [page, setPage] = useState(1);
@@ -52,7 +54,7 @@ export default function Home() {
     if (status !== 'loading') {
       fetchChannels();
     }
-  }, [minSubs, maxSubs, inactiveMonths, sortBy, order, page, status]);
+  }, [minSubs, maxSubs, language, region, inactiveMonths, sortBy, order, page, status]);
 
   const fetchChannels = async () => {
     setLoading(true);
@@ -67,9 +69,11 @@ export default function Home() {
         order,
         page: page.toString(),
         limit: '50',
-        language: 'ru',
-        region: 'CIS',
       });
+
+      // Only add language and region if they are selected
+      if (language) params.append('language', language);
+      if (region) params.append('region', region);
 
       const response = await fetch(`/api/channels?${params}`);
       const data: ApiResponse = await response.json();
@@ -124,6 +128,48 @@ export default function Home() {
     return `${styles.inactiveBadge} ${months >= 12 ? styles.danger : styles.warning}`;
   };
 
+  // Preset filter combinations
+  const applyPreset = (preset: string) => {
+    setPage(1);
+    switch (preset) {
+      case 'all':
+        setMinSubs(0);
+        setMaxSubs(10000000);
+        setLanguage('');
+        setRegion('');
+        setInactiveMonths(0);
+        break;
+      case 'abandoned-large':
+        setMinSubs(100000);
+        setMaxSubs(10000000);
+        setLanguage('');
+        setRegion('');
+        setInactiveMonths(12);
+        break;
+      case 'abandoned-medium':
+        setMinSubs(10000);
+        setMaxSubs(100000);
+        setLanguage('');
+        setRegion('');
+        setInactiveMonths(6);
+        break;
+      case 'russian-inactive':
+        setMinSubs(10000);
+        setMaxSubs(10000000);
+        setLanguage('ru');
+        setRegion('CIS');
+        setInactiveMonths(6);
+        break;
+      case 'english-inactive':
+        setMinSubs(10000);
+        setMaxSubs(10000000);
+        setLanguage('en');
+        setRegion('US');
+        setInactiveMonths(6);
+        break;
+    }
+  };
+
   return (
     <>
       <Head>
@@ -176,7 +222,7 @@ export default function Home() {
         </div>
 
         <p className={styles.description}>
-          Discover undervalued Russian-speaking YouTube channels with high subscriber counts but inactive uploads. Perfect for acquisition opportunities.
+          Discover undervalued YouTube channels worldwide with high subscriber counts but inactive uploads. Perfect for acquisition opportunities.
         </p>
 
         {/* Upgrade Banner */}
@@ -195,6 +241,24 @@ export default function Home() {
         )}
 
         {/* Filters */}
+        <div className={styles.presets}>
+          <button onClick={() => applyPreset('all')} className={styles.presetBtn}>
+            All Channels
+          </button>
+          <button onClick={() => applyPreset('abandoned-large')} className={styles.presetBtn}>
+            Abandoned 100K+
+          </button>
+          <button onClick={() => applyPreset('abandoned-medium')} className={styles.presetBtn}>
+            Abandoned 10K-100K
+          </button>
+          <button onClick={() => applyPreset('russian-inactive')} className={styles.presetBtn}>
+            Russian Inactive
+          </button>
+          <button onClick={() => applyPreset('english-inactive')} className={styles.presetBtn}>
+            English Inactive
+          </button>
+        </div>
+
         <div className={styles.filters}>
           <div className={styles.filterGroup}>
             <label>Min Subscribers</label>
@@ -215,11 +279,45 @@ export default function Home() {
           </div>
 
           <div className={styles.filterGroup}>
+            <label>Language</label>
+            <select
+              value={language}
+              onChange={(e) => { setLanguage(e.target.value); setPage(1); }}
+            >
+              <option value="">All Languages</option>
+              <option value="en">English</option>
+              <option value="ru">Russian</option>
+              <option value="es">Spanish</option>
+              <option value="de">German</option>
+              <option value="fr">French</option>
+              <option value="ja">Japanese</option>
+              <option value="ko">Korean</option>
+              <option value="zh">Chinese</option>
+            </select>
+          </div>
+
+          <div className={styles.filterGroup}>
+            <label>Region</label>
+            <select
+              value={region}
+              onChange={(e) => { setRegion(e.target.value); setPage(1); }}
+            >
+              <option value="">All Regions</option>
+              <option value="US">United States</option>
+              <option value="UK">United Kingdom</option>
+              <option value="CIS">CIS (Russia, Ukraine, etc.)</option>
+              <option value="EU">European Union</option>
+              <option value="Asia">Asia</option>
+            </select>
+          </div>
+
+          <div className={styles.filterGroup}>
             <label>Inactive For</label>
             <select
               value={inactiveMonths}
               onChange={(e) => { setInactiveMonths(Number(e.target.value)); setPage(1); }}
             >
+              <option value={0}>Any (including active)</option>
               <option value={3}>3+ months</option>
               <option value={6}>6+ months</option>
               <option value={12}>12+ months</option>
