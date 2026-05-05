@@ -13,13 +13,16 @@
   },
   "dependencies": {
     "@libsql/client": "^0.17.3",
+    "@stripe/stripe-js": "^9.4.0",
     "@types/xml2js": "^0.4.14",
     "@vercel/postgres": "^0.8.0",
     "googleapis": "^134.0.0",
+    "micro": "^10.0.1",
     "next": "^14.2.0",
     "next-auth": "^4.24.14",
     "react": "^18.3.0",
     "react-dom": "^18.3.0",
+    "stripe": "^22.1.0",
     "xml2js": "^0.6.2"
   },
   "devDependencies": {
