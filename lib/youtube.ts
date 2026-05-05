@@ -40,7 +40,7 @@ export interface YouTubeChannel {
 export async function searchRussianChannels(maxResults: number = 50): Promise<YouTubeChannel[]> {
   try {
     // Multi-stage search strategy to find abandoned mid-tier channels (10k-1M subs)
-    // Stage 1: Search for videos from 2018-2021 (older = more likely abandoned)
+    // Stage 1: Search for videos from 2019-2022 (balanced: not too old, not too recent)
     const searchQueries = [
       'майнкрафт выживание',      // Minecraft survival
       'обзор техники',             // Tech reviews
@@ -57,7 +57,7 @@ export async function searchRussianChannels(maxResults: number = 50): Promise<Yo
 
     for (const query of searchQueries) {
       try {
-        // Search for videos from 2018-2021 (older content, likely abandoned channels)
+        // Search for videos from 2019-2022 (more balanced date range)
         const searchResponse = await youtube.search.list({
           part: ['snippet'],
           type: ['video'],
@@ -65,9 +65,9 @@ export async function searchRussianChannels(maxResults: number = 50): Promise<Yo
           regionCode: 'RU',
           relevanceLanguage: 'ru',
           maxResults: Math.ceil(maxResults / searchQueries.length),
-          publishedAfter: '2018-01-01T00:00:00Z',
-          publishedBefore: '2021-12-31T23:59:59Z',
-          order: 'date',  // Chronological order instead of viewCount
+          publishedAfter: '2019-01-01T00:00:00Z',
+          publishedBefore: '2022-12-31T23:59:59Z',
+          order: 'relevance',  // Changed to relevance for better results
           videoDefinition: 'any',
         });
 
@@ -94,9 +94,9 @@ export async function searchRussianChannels(maxResults: number = 50): Promise<Yo
             regionCode: 'RU',
             relevanceLanguage: 'ru',
             maxResults: Math.ceil(maxResults / searchQueries.length),
-            publishedAfter: '2018-01-01T00:00:00Z',
-            publishedBefore: '2021-12-31T23:59:59Z',
-            order: 'date',
+            publishedAfter: '2019-01-01T00:00:00Z',
+            publishedBefore: '2022-12-31T23:59:59Z',
+            order: 'relevance',
             videoDefinition: 'any',
           });
 
@@ -251,17 +251,17 @@ export async function getChannelDetails(channelIds: string[]): Promise<YouTubeCh
       });
     }
 
-    // Stage 4: Filter by inactivity (6+ months)
-    const sixMonthsAgo = new Date();
-    sixMonthsAgo.setMonth(sixMonthsAgo.getMonth() - 6);
-    const inactiveThreshold = sixMonthsAgo.toISOString().split('T')[0];
+    // Stage 4: Filter by inactivity (3+ months for initial testing)
+    const threeMonthsAgo = new Date();
+    threeMonthsAgo.setMonth(threeMonthsAgo.getMonth() - 3);
+    const inactiveThreshold = threeMonthsAgo.toISOString().split('T')[0];
 
     const inactiveChannels = channels.filter(channel => {
       if (!channel.lastUploadDate) return false; // Skip channels without upload date
       return channel.lastUploadDate <= inactiveThreshold;
     });
 
-    console.log(`[YouTube Search] Filtered to ${inactiveChannels.length} inactive channels (6+ months) from ${channels.length} total`);
+    console.log(`[YouTube Search] Filtered to ${inactiveChannels.length} inactive channels (3+ months) from ${channels.length} total`);
 
     return inactiveChannels;
   } catch (error: any) {
