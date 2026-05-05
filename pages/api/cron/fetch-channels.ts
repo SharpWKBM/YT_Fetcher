@@ -17,12 +17,13 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     // Initialize database if needed
     await initDatabase();
 
-    // Use new multi-query search to discover 1000 channels
+    // Use new multi-query search to discover 100 channels per run
+    // (Vercel free tier has 60s timeout, so we run multiple times daily)
     const channels = await discoverChannelsMultiQuery({
       minSubscribers: 10000,
       maxSubscribers: 1000000,
       inactiveMonths: 12
-    }, 1000);
+    }, 100);
 
     // Store in database
     let inserted = 0;
