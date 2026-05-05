@@ -39,25 +39,25 @@ export interface YouTubeChannel {
 
 export async function searchRussianChannels(maxResults: number = 50): Promise<YouTubeChannel[]> {
   try {
-    // Search for Russian-language channels using multiple strategies
-    // Strategy: Search for videos from 2018-2023 to find potentially abandoned channels
+    // Multi-stage search strategy to find abandoned mid-tier channels (10k-1M subs)
+    // Stage 1: Search for videos from 2018-2021 (older = more likely abandoned)
     const searchQueries = [
-      'влог',
-      'обзор',
-      'игры',
-      'летсплей',
-      'распаковка',
-      'туториал',
-      'реакция',
-      'челлендж',
-      'пранк',
-      'музыка'
+      'майнкрафт выживание',      // Minecraft survival
+      'обзор техники',             // Tech reviews
+      'кулинарный рецепт',         // Cooking recipes
+      'путешествие влог',          // Travel vlog
+      'обучение программированию', // Programming tutorials
+      'ремонт своими руками',      // DIY repairs
+      'фитнес тренировка',         // Fitness training
+      'книжный обзор',             // Book reviews
+      'игровой летсплей',          // Gaming let's play
+      'музыкальный кавер',         // Music covers
     ];
     const allChannelIds = new Set<string>();
 
     for (const query of searchQueries) {
       try {
-        // Search for videos from 2018-2023 to find channels that were active then
+        // Search for videos from 2018-2021 (older content, likely abandoned channels)
         const searchResponse = await youtube.search.list({
           part: ['snippet'],
           type: ['video'],
@@ -66,8 +66,9 @@ export async function searchRussianChannels(maxResults: number = 50): Promise<Yo
           relevanceLanguage: 'ru',
           maxResults: Math.ceil(maxResults / searchQueries.length),
           publishedAfter: '2018-01-01T00:00:00Z',
-          publishedBefore: '2023-12-31T23:59:59Z',
-          order: 'viewCount',
+          publishedBefore: '2021-12-31T23:59:59Z',
+          order: 'date',  // Chronological order instead of viewCount
+          videoDefinition: 'any',
         });
 
         if (searchResponse.data.items) {
@@ -94,8 +95,9 @@ export async function searchRussianChannels(maxResults: number = 50): Promise<Yo
             relevanceLanguage: 'ru',
             maxResults: Math.ceil(maxResults / searchQueries.length),
             publishedAfter: '2018-01-01T00:00:00Z',
-            publishedBefore: '2023-12-31T23:59:59Z',
-            order: 'viewCount',
+            publishedBefore: '2021-12-31T23:59:59Z',
+            order: 'date',
+            videoDefinition: 'any',
           });
 
           if (retryResponse.data.items) {
@@ -112,10 +114,78 @@ export async function searchRussianChannels(maxResults: number = 50): Promise<Yo
     }
 
     const channelIds = Array.from(allChannelIds).slice(0, maxResults);
-    return await getChannelDetails(channelIds);
+
+    // Stage 2: Pre-filter channels by subscriber count (10k-1M)
+    console.log(`[YouTube Search] Found ${channelIds.length} unique channels, filtering by subscriber count...`);
+    const filteredChannelIds = await filterChannelsBySubscribers(channelIds, 10000, 1000000);
+    console.log(`[YouTube Search] ${filteredChannelIds.length} channels in target range (10k-1M subs)`);
+
+    // Stage 3: Get full details and filter by inactivity
+    return await getChannelDetails(filteredChannelIds);
   } catch (error) {
     console.error('Error searching Russian channels:', error);
     return [];
+  }
+}
+
+async function filterChannelsBySubscribers(
+  channelIds: string[],
+  minSubs: number,
+  maxSubs: number
+): Promise<string[]> {
+  if (channelIds.length === 0) return [];
+
+  try {
+    const filteredIds: string[] = [];
+
+    // Process in batches of 50 (YouTube API limit)
+    for (let i = 0; i < channelIds.length; i += 50) {
+      const batch = channelIds.slice(i, i + 50);
+
+      try {
+        const response = await getYouTubeClient().channels.list({
+          part: ['statistics'],
+          id: batch,
+        });
+
+        if (response.data.items) {
+          response.data.items.forEach(channel => {
+            const subCount = parseInt(channel.statistics?.subscriberCount || '0');
+            if (subCount >= minSubs && subCount <= maxSubs) {
+              filteredIds.push(channel.id!);
+            }
+          });
+        }
+      } catch (error: any) {
+        // Handle quota exceeded with key rotation
+        if (error?.code === 403 && error?.message?.includes('quota')) {
+          console.log(`[YouTube API] Quota exceeded on subscriber filter, rotating key...`);
+          rotateApiKey();
+
+          // Retry this batch
+          const retryResponse = await getYouTubeClient().channels.list({
+            part: ['statistics'],
+            id: batch,
+          });
+
+          if (retryResponse.data.items) {
+            retryResponse.data.items.forEach(channel => {
+              const subCount = parseInt(channel.statistics?.subscriberCount || '0');
+              if (subCount >= minSubs && subCount <= maxSubs) {
+                filteredIds.push(channel.id!);
+              }
+            });
+          }
+        } else {
+          console.error(`Error filtering batch:`, error);
+        }
+      }
+    }
+
+    return filteredIds;
+  } catch (error) {
+    console.error('Error in filterChannelsBySubscribers:', error);
+    return channelIds; // Fallback: return all if filtering fails
   }
 }
 
@@ -181,7 +251,19 @@ export async function getChannelDetails(channelIds: string[]): Promise<YouTubeCh
       });
     }
 
-    return channels;
+    // Stage 4: Filter by inactivity (6+ months)
+    const sixMonthsAgo = new Date();
+    sixMonthsAgo.setMonth(sixMonthsAgo.getMonth() - 6);
+    const inactiveThreshold = sixMonthsAgo.toISOString().split('T')[0];
+
+    const inactiveChannels = channels.filter(channel => {
+      if (!channel.lastUploadDate) return false; // Skip channels without upload date
+      return channel.lastUploadDate <= inactiveThreshold;
+    });
+
+    console.log(`[YouTube Search] Filtered to ${inactiveChannels.length} inactive channels (6+ months) from ${channels.length} total`);
+
+    return inactiveChannels;
   } catch (error: any) {
     // If quota exceeded on main channels.list call, rotate and retry
     if (error?.code === 403 && error?.message?.includes('quota')) {
