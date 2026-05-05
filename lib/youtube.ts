@@ -39,25 +39,19 @@ export interface YouTubeChannel {
 
 export async function searchRussianChannels(maxResults: number = 50): Promise<YouTubeChannel[]> {
   try {
-    // Multi-stage search strategy to find abandoned mid-tier channels (10k-1M subs)
-    // Stage 1: Search for videos from 2019-2022 (balanced: not too old, not too recent)
+    // Simplified search: just find Russian channels, filter later
     const searchQueries = [
-      'майнкрафт выживание',      // Minecraft survival
-      'обзор техники',             // Tech reviews
-      'кулинарный рецепт',         // Cooking recipes
-      'путешествие влог',          // Travel vlog
-      'обучение программированию', // Programming tutorials
-      'ремонт своими руками',      // DIY repairs
-      'фитнес тренировка',         // Fitness training
-      'книжный обзор',             // Book reviews
-      'игровой летсплей',          // Gaming let's play
-      'музыкальный кавер',         // Music covers
+      'влог',
+      'обзор',
+      'игры',
+      'летсплей',
+      'туториал',
     ];
     const allChannelIds = new Set<string>();
 
     for (const query of searchQueries) {
       try {
-        // Search for videos from 2019-2022 (more balanced date range)
+        // Simple search without date restrictions
         const searchResponse = await youtube.search.list({
           part: ['snippet'],
           type: ['video'],
@@ -65,10 +59,7 @@ export async function searchRussianChannels(maxResults: number = 50): Promise<Yo
           regionCode: 'RU',
           relevanceLanguage: 'ru',
           maxResults: Math.ceil(maxResults / searchQueries.length),
-          publishedAfter: '2019-01-01T00:00:00Z',
-          publishedBefore: '2022-12-31T23:59:59Z',
-          order: 'relevance',  // Changed to relevance for better results
-          videoDefinition: 'any',
+          order: 'relevance',
         });
 
         if (searchResponse.data.items) {
@@ -94,10 +85,7 @@ export async function searchRussianChannels(maxResults: number = 50): Promise<Yo
             regionCode: 'RU',
             relevanceLanguage: 'ru',
             maxResults: Math.ceil(maxResults / searchQueries.length),
-            publishedAfter: '2019-01-01T00:00:00Z',
-            publishedBefore: '2022-12-31T23:59:59Z',
             order: 'relevance',
-            videoDefinition: 'any',
           });
 
           if (retryResponse.data.items) {
@@ -120,8 +108,11 @@ export async function searchRussianChannels(maxResults: number = 50): Promise<Yo
     const filteredChannelIds = await filterChannelsBySubscribers(channelIds, 10000, 1000000);
     console.log(`[YouTube Search] ${filteredChannelIds.length} channels in target range (10k-1M subs)`);
 
-    // Stage 3: Get full details and filter by inactivity
-    return await getChannelDetails(filteredChannelIds);
+    // Stage 3: Get full details (no inactivity filter - let database handle it)
+    const channels = await getChannelDetails(filteredChannelIds);
+    console.log(`[YouTube Search] Retrieved ${channels.length} channels with full details`);
+
+    return channels;
   } catch (error) {
     console.error('Error searching Russian channels:', error);
     return [];
@@ -251,19 +242,7 @@ export async function getChannelDetails(channelIds: string[]): Promise<YouTubeCh
       });
     }
 
-    // Stage 4: Filter by inactivity (3+ months for initial testing)
-    const threeMonthsAgo = new Date();
-    threeMonthsAgo.setMonth(threeMonthsAgo.getMonth() - 3);
-    const inactiveThreshold = threeMonthsAgo.toISOString().split('T')[0];
-
-    const inactiveChannels = channels.filter(channel => {
-      if (!channel.lastUploadDate) return false; // Skip channels without upload date
-      return channel.lastUploadDate <= inactiveThreshold;
-    });
-
-    console.log(`[YouTube Search] Filtered to ${inactiveChannels.length} inactive channels (3+ months) from ${channels.length} total`);
-
-    return inactiveChannels;
+    return channels;
   } catch (error: any) {
     // If quota exceeded on main channels.list call, rotate and retry
     if (error?.code === 403 && error?.message?.includes('quota')) {
