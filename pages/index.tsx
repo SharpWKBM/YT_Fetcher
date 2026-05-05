@@ -29,6 +29,14 @@ interface ApiResponse {
   tierLimit?: number;
 }
 
+interface SavedSearch {
+  id: string;
+  user_id: string;
+  name: string;
+  filters: string;
+  created_at: string;
+}
+
 export default function Home() {
   const { data: session, status } = useSession();
   const [channels, setChannels] = useState<Channel[]>([]);
@@ -37,6 +45,12 @@ export default function Home() {
   const [userTier, setUserTier] = useState<string>('free');
   const [channelsViewed, setChannelsViewed] = useState(0);
   const [tierLimit, setTierLimit] = useState(10);
+
+  // Saved searches
+  const [savedSearches, setSavedSearches] = useState<SavedSearch[]>([]);
+  const [showSavedSearches, setShowSavedSearches] = useState(false);
+  const [showSaveDialog, setShowSaveDialog] = useState(false);
+  const [searchName, setSearchName] = useState('');
 
   // Filters
   const [minSubs, setMinSubs] = useState(0);
@@ -170,6 +184,90 @@ export default function Home() {
     }
   };
 
+  // Fetch saved searches
+  const fetchSavedSearches = async () => {
+    if (!session) return;
+    try {
+      const response = await fetch('/api/saved-searches');
+      const data = await response.json();
+      if (data.searches) {
+        setSavedSearches(data.searches);
+      }
+    } catch (error) {
+      console.error('Error fetching saved searches:', error);
+    }
+  };
+
+  // Save current search
+  const saveCurrentSearch = async () => {
+    if (!session || !searchName.trim()) return;
+
+    const filters = {
+      minSubs,
+      maxSubs,
+      language,
+      region,
+      inactiveMonths,
+      sortBy,
+      order,
+    };
+
+    try {
+      const response = await fetch('/api/saved-searches', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ name: searchName, filters }),
+      });
+
+      if (response.ok) {
+        setSearchName('');
+        setShowSaveDialog(false);
+        fetchSavedSearches();
+      }
+    } catch (error) {
+      console.error('Error saving search:', error);
+    }
+  };
+
+  // Load saved search
+  const loadSavedSearch = (search: SavedSearch) => {
+    const filters = JSON.parse(search.filters);
+    setMinSubs(filters.minSubs || 0);
+    setMaxSubs(filters.maxSubs || 10000000);
+    setLanguage(filters.language || '');
+    setRegion(filters.region || '');
+    setInactiveMonths(filters.inactiveMonths || 0);
+    setSortBy(filters.sortBy || 'subscribers');
+    setOrder(filters.order || 'DESC');
+    setPage(1);
+    setShowSavedSearches(false);
+  };
+
+  // Delete saved search
+  const deleteSavedSearch = async (searchId: string) => {
+    if (!session) return;
+    try {
+      const response = await fetch('/api/saved-searches', {
+        method: 'DELETE',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ searchId }),
+      });
+
+      if (response.ok) {
+        fetchSavedSearches();
+      }
+    } catch (error) {
+      console.error('Error deleting search:', error);
+    }
+  };
+
+  // Fetch saved searches on mount
+  useEffect(() => {
+    if (session) {
+      fetchSavedSearches();
+    }
+  }, [session]);
+
   return (
     <>
       <Head>
@@ -192,6 +290,38 @@ export default function Home() {
                   <span className={styles.usageCounter}>
                     {channelsViewed}/{tierLimit === Infinity ? '∞' : tierLimit} viewed
                   </span>
+                </div>
+                <div className={styles.savedSearchesWrapper}>
+                  <button
+                    onClick={() => setShowSavedSearches(!showSavedSearches)}
+                    className={`${styles.btn} ${styles.btnSecondary}`}
+                  >
+                    My Searches ({savedSearches.length})
+                  </button>
+                  {showSavedSearches && (
+                    <div className={styles.dropdown}>
+                      {savedSearches.length === 0 ? (
+                        <div className={styles.dropdownEmpty}>No saved searches yet</div>
+                      ) : (
+                        savedSearches.map((search) => (
+                          <div key={search.id} className={styles.dropdownItem}>
+                            <span
+                              onClick={() => loadSavedSearch(search)}
+                              className={styles.searchName}
+                            >
+                              {search.name}
+                            </span>
+                            <button
+                              onClick={() => deleteSavedSearch(search.id)}
+                              className={styles.deleteBtn}
+                            >
+                              ×
+                            </button>
+                          </div>
+                        ))
+                      )}
+                    </div>
+                  )}
                 </div>
                 <div className={styles.userInfo}>
                   {session.user?.image && (
@@ -325,6 +455,50 @@ export default function Home() {
             </select>
           </div>
         </div>
+
+        {/* Save Search Button */}
+        {session && (
+          <div className={styles.saveSearchSection}>
+            <button
+              onClick={() => setShowSaveDialog(true)}
+              className={`${styles.btn} ${styles.btnPrimary}`}
+            >
+              💾 Save Current Search
+            </button>
+          </div>
+        )}
+
+        {/* Save Search Dialog */}
+        {showSaveDialog && (
+          <div className={styles.modal}>
+            <div className={styles.modalContent}>
+              <h3>Save Search</h3>
+              <input
+                type="text"
+                placeholder="Enter search name..."
+                value={searchName}
+                onChange={(e) => setSearchName(e.target.value)}
+                className={styles.modalInput}
+                onKeyPress={(e) => e.key === 'Enter' && saveCurrentSearch()}
+              />
+              <div className={styles.modalActions}>
+                <button
+                  onClick={saveCurrentSearch}
+                  className={`${styles.btn} ${styles.btnPrimary}`}
+                  disabled={!searchName.trim()}
+                >
+                  Save
+                </button>
+                <button
+                  onClick={() => { setShowSaveDialog(false); setSearchName(''); }}
+                  className={`${styles.btn} ${styles.btnSecondary}`}
+                >
+                  Cancel
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
 
         {/* Results Header */}
         <div className={styles.resultsHeader}>
