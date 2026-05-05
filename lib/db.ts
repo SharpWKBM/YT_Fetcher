@@ -94,11 +94,11 @@ export interface ChannelFilters {
 
 export async function getChannels(filters: ChannelFilters = {}) {
   const {
-    minSubs = 10000,
-    maxSubs = 10000000,
-    language = 'ru',
-    region = 'CIS',
-    inactiveMonths = 6,
+    minSubs = 0,
+    maxSubs = 10000000000,
+    language,
+    region,
+    inactiveMonths = 0,
     sortBy = 'subscribers',
     order = 'DESC',
     page = 1,
@@ -114,30 +114,46 @@ export async function getChannels(filters: ChannelFilters = {}) {
     ? `subscribers ${order}`
     : `last_upload_date ${order}`;
 
+  // Build WHERE clause dynamically based on provided filters
+  const whereClauses = [
+    `subscribers >= ?`,
+    `subscribers <= ?`,
+  ];
+  const args: any[] = [minSubs, maxSubs];
+
+  if (language) {
+    whereClauses.push(`(language = ? OR language IS NULL)`);
+    args.push(language);
+  }
+
+  if (region) {
+    whereClauses.push(`(region = ? OR region IS NULL)`);
+    args.push(region);
+  }
+
+  if (inactiveMonths > 0) {
+    whereClauses.push(`(last_upload_date IS NULL OR last_upload_date <= ?)`);
+    args.push(inactiveDateStr);
+  }
+
+  const whereClause = whereClauses.join(' AND ');
+
   const result = await client.execute({
     sql: `
       SELECT * FROM channels
-      WHERE subscribers >= ?
-        AND subscribers <= ?
-        AND (language = ? OR language IS NULL)
-        AND (region = ? OR region IS NULL)
-        AND (last_upload_date IS NULL OR last_upload_date <= ?)
+      WHERE ${whereClause}
       ORDER BY ${orderByClause}
       LIMIT ? OFFSET ?
     `,
-    args: [minSubs, maxSubs, language, region, inactiveDateStr, limit, offset],
+    args: [...args, limit, offset],
   });
 
   const countResult = await client.execute({
     sql: `
       SELECT COUNT(*) as total FROM channels
-      WHERE subscribers >= ?
-        AND subscribers <= ?
-        AND (language = ? OR language IS NULL)
-        AND (region = ? OR region IS NULL)
-        AND (last_upload_date IS NULL OR last_upload_date <= ?)
+      WHERE ${whereClause}
     `,
-    args: [minSubs, maxSubs, language, region, inactiveDateStr],
+    args: args,
   });
 
   return {
