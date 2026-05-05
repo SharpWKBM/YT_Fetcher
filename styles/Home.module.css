@@ -615,6 +615,22 @@
   color: var(--color-text-primary);
 }
 
+/* Channel Grid */
+.channelGrid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(320px, 1fr));
+  gap: var(--space-lg);
+  margin-bottom: var(--space-2xl);
+}
+
+.emptyState {
+  grid-column: 1 / -1;
+  text-align: center;
+  padding: var(--space-3xl);
+  color: var(--color-text-secondary);
+  font-size: 16px;
+}
+
 /* Loading Skeletons */
 .skeletonRow {
   display: flex;
@@ -679,6 +695,10 @@
 
   .upgradeBtn {
     width: 100%;
+  }
+
+  .channelGrid {
+    grid-template-columns: 1fr;
   }
 
   .table th,

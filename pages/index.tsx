@@ -2,6 +2,7 @@ import { useState, useEffect } from 'react';
 import Head from 'next/head';
 import { useSession, signIn, signOut } from 'next-auth/react';
 import styles from '@/styles/Home.module.css';
+import ChannelCardV2 from '@/components/ChannelCard/ChannelCardV2';
 
 interface Channel {
   id: string;
@@ -578,118 +579,42 @@ export default function Home() {
           </div>
         )}
 
-        {/* Table */}
-        <div className={styles.tableWrapper}>
-          <table className={styles.table}>
-            <thead>
-              <tr>
-                <th>Channel</th>
-                <th
-                  className={styles.sortable}
-                  onClick={() => handleSort('subscribers')}
-                  style={{ textAlign: 'right' }}
-                >
-                  Subscribers {sortBy === 'subscribers' && (order === 'DESC' ? '↓' : '↑')}
-                </th>
-                <th
-                  className={styles.sortable}
-                  onClick={() => handleSort('last_upload_date')}
-                >
-                  Last Upload {sortBy === 'last_upload_date' && (order === 'DESC' ? '↓' : '↑')}
-                </th>
-                <th style={{ textAlign: 'center' }}>Inactive</th>
-                <th style={{ textAlign: 'center' }}>Language</th>
-                {session && <th style={{ textAlign: 'center', width: '60px' }}>Favorite</th>}
-              </tr>
-            </thead>
-            <tbody>
-              {loading ? (
-                // Loading Skeletons
-                Array.from({ length: 5 }).map((_, i) => (
-                  <tr key={i}>
-                    <td>
-                      <div className={styles.skeletonRow}>
-                        <div className={`${styles.skeletonCircle} skeleton`}></div>
-                        <div className={`${styles.skeletonText} ${styles.skeletonTextLong} skeleton`}></div>
-                      </div>
-                    </td>
-                    <td>
-                      <div className={`${styles.skeletonText} ${styles.skeletonTextShort} skeleton`}></div>
-                    </td>
-                    <td>
-                      <div className={`${styles.skeletonText} ${styles.skeletonTextMedium} skeleton`}></div>
-                    </td>
-                    <td>
-                      <div className={`${styles.skeletonText} ${styles.skeletonTextShort} skeleton`}></div>
-                    </td>
-                    <td>
-                      <div className={`${styles.skeletonText} ${styles.skeletonTextShort} skeleton`}></div>
-                    </td>
-                    {session && (
-                      <td>
-                        <div className={`${styles.skeletonText} ${styles.skeletonTextShort} skeleton`}></div>
-                      </td>
-                    )}
-                  </tr>
-                ))
-              ) : channels.length === 0 ? (
-                <tr>
-                  <td colSpan={session ? 6 : 5} style={{ textAlign: 'center', padding: '40px', color: '#64748b' }}>
-                    No channels found. Try adjusting your filters.
-                  </td>
-                </tr>
-              ) : (
-                channels.map((channel) => (
-                  <tr key={channel.id}>
-                    <td>
-                      <div className={styles.channelCell}>
-                        {channel.thumbnail_url && (
-                          <img
-                            src={channel.thumbnail_url}
-                            alt={channel.title}
-                            className={styles.channelThumbnail}
-                          />
-                        )}
-                        <a
-                          href={channel.channel_url}
-                          target="_blank"
-                          rel="noopener noreferrer"
-                          className={styles.channelLink}
-                        >
-                          {channel.title}
-                        </a>
-                      </div>
-                    </td>
-                    <td style={{ textAlign: 'right' }}>
-                      {formatNumber(channel.subscribers)}
-                    </td>
-                    <td>
-                      {formatDate(channel.last_upload_date)}
-                    </td>
-                    <td style={{ textAlign: 'center' }}>
-                      <span className={getInactiveBadgeClass(channel.monthsInactive)}>
-                        {channel.monthsInactive !== null ? `${channel.monthsInactive} mo` : 'N/A'}
-                      </span>
-                    </td>
-                    <td style={{ textAlign: 'center' }}>
-                      {channel.language?.toUpperCase() || 'RU'}
-                    </td>
-                    {session && (
-                      <td style={{ textAlign: 'center' }}>
-                        <button
-                          onClick={() => toggleFavorite(channel.id)}
-                          className={styles.favoriteBtn}
-                          title={favorites.has(channel.id) ? 'Remove from favorites' : 'Add to favorites'}
-                        >
-                          {favorites.has(channel.id) ? '★' : '☆'}
-                        </button>
-                      </td>
-                    )}
-                  </tr>
-                ))
-              )}
-            </tbody>
-          </table>
+        {/* Channel Grid */}
+        <div className={styles.channelGrid}>
+          {loading ? (
+            // Loading Skeletons
+            Array.from({ length: 6 }).map((_, i) => (
+              <ChannelCardV2
+                key={i}
+                channel={{
+                  id: `skeleton-${i}`,
+                  title: 'Loading...',
+                  subscribers: 0,
+                  language: null,
+                  region: null,
+                  last_upload_date: null,
+                  channel_url: '#',
+                  thumbnail_url: null,
+                  monthsInactive: null,
+                }}
+                index={i}
+              />
+            ))
+          ) : channels.length === 0 ? (
+            <div className={styles.emptyState}>
+              <p>No channels found. Try adjusting your filters.</p>
+            </div>
+          ) : (
+            channels.map((channel, index) => (
+              <ChannelCardV2
+                key={channel.id}
+                channel={channel}
+                isFavorite={favorites.has(channel.id)}
+                onToggleFavorite={session ? toggleFavorite : undefined}
+                index={index}
+              />
+            ))
+          )}
         </div>
 
         {/* Pagination */}
