@@ -43,9 +43,18 @@ export async function discoverChannelsMultiQuery(
   console.log(`[Multi-Query Search] Target: ${maxChannels} channels`);
   console.log(`[Multi-Query Search] Filters: ${filters.minSubscribers}-${filters.maxSubscribers} subs, ${filters.inactiveMonths}+ months inactive`);
 
+  let consecutiveQuotaErrors = 0;
+  const MAX_CONSECUTIVE_QUOTA_ERRORS = 5; // Stop after 5 consecutive quota errors
+
   for (const query of queries) {
     if (discoveredChannels.size >= maxChannels) {
       console.log(`[Multi-Query Search] Reached target of ${maxChannels} channels`);
+      break;
+    }
+
+    // Stop if we've hit quota limits on all keys
+    if (consecutiveQuotaErrors >= MAX_CONSECUTIVE_QUOTA_ERRORS) {
+      console.log(`[Multi-Query Search] All API keys exhausted (${consecutiveQuotaErrors} consecutive quota errors). Stopping search.`);
       break;
     }
 
@@ -53,6 +62,9 @@ export async function discoverChannelsMultiQuery(
       console.log(`[Multi-Query Search] Executing query: ${query.q} (${query.regionCode}, ${query.relevanceLanguage})`);
       const channelIds = await executeSearch(query);
       console.log(`[Multi-Query Search] Found ${channelIds.length} channels from search`);
+
+      // Reset consecutive error counter on success
+      consecutiveQuotaErrors = 0;
 
       if (channelIds.length === 0) {
         continue;
@@ -98,9 +110,12 @@ export async function discoverChannelsMultiQuery(
       if (error?.code === 403 && error?.message?.includes('quota')) {
         console.log('[Multi-Query Search] Quota exceeded, rotating key...');
         rotateApiKey();
+        consecutiveQuotaErrors++;
       } else {
         console.error('[Multi-Query Search] Error:', error);
         console.error('[Multi-Query Search] Error details:', JSON.stringify(error, null, 2));
+        // Reset counter for non-quota errors
+        consecutiveQuotaErrors = 0;
       }
     }
   }
@@ -112,16 +127,20 @@ export async function discoverChannelsMultiQuery(
 function generateSearchQueries(publishedBefore: string): SearchQuery[] {
   const queries: SearchQuery[] = [];
 
-  const priorityCategories = ['Gaming', 'Tech & Science', 'Education', 'Vlog'];
-  const priorityLanguages = ['en', 'ru', 'es', 'pt', 'de', 'fr', 'ja'];
-  const priorityRegions = ['US', 'RU', 'BR', 'IN', 'GB', 'DE', 'JP'];
+  // DRASTICALLY REDUCED: Only 2 categories, 3 languages, 3 regions, 2 keywords each
+  // This generates only 2 × 3 × 3 × 2 = 36 queries instead of 980
+  // Each query costs 100 units, so 36 queries = 3,600 units (fits in one key's daily quota)
+  const priorityCategories = ['Gaming', 'Tech & Science'];
+  const priorityLanguages = ['en', 'ru', 'es'];
+  const priorityRegions = ['US', 'RU', 'BR'];
 
   for (const category of priorityCategories) {
     const keywords = SEARCH_CONFIG.keywords[category] || [];
 
     for (const language of priorityLanguages) {
       for (const region of priorityRegions) {
-        for (const keyword of keywords.slice(0, 5)) {
+        // Only use first 2 keywords per category to reduce quota usage
+        for (const keyword of keywords.slice(0, 2)) {
           queries.push({
             q: keyword,
             type: 'channel',
