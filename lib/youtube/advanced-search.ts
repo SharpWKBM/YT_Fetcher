@@ -50,7 +50,9 @@ export async function discoverChannelsMultiQuery(
     }
 
     try {
+      console.log(`[Multi-Query Search] Executing query: ${query.q} (${query.regionCode}, ${query.relevanceLanguage})`);
       const channelIds = await executeSearch(query);
+      console.log(`[Multi-Query Search] Found ${channelIds.length} channels from search`);
 
       if (channelIds.length === 0) {
         continue;
@@ -61,18 +63,21 @@ export async function discoverChannelsMultiQuery(
         filters.minSubscribers,
         filters.maxSubscribers
       );
+      console.log(`[Multi-Query Search] After subscriber filter: ${filteredIds.length} channels`);
 
       if (filteredIds.length === 0) {
         continue;
       }
 
       const channels = await getChannelDetails(filteredIds);
+      console.log(`[Multi-Query Search] Got details for ${channels.length} channels`);
 
       const inactiveChannels = channels.filter(ch => {
         if (!ch.lastUploadDate) return false;
         const lastUpload = new Date(ch.lastUploadDate);
         return lastUpload < inactiveDate;
       });
+      console.log(`[Multi-Query Search] After inactivity filter: ${inactiveChannels.length} channels`);
 
       for (const channel of inactiveChannels) {
         if (!discoveredChannels.has(channel.id)) {
@@ -95,6 +100,7 @@ export async function discoverChannelsMultiQuery(
         rotateApiKey();
       } else {
         console.error('[Multi-Query Search] Error:', error);
+        console.error('[Multi-Query Search] Error details:', JSON.stringify(error, null, 2));
       }
     }
   }
