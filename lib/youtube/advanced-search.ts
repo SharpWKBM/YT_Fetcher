@@ -16,6 +16,10 @@ interface YouTubeChannel {
   lastUploadDate: string | null;
   channelUrl: string;
   thumbnailUrl: string;
+  socialLinks?: string;
+  videoCount?: number;
+  avgViews?: number;
+  engagementRate?: number;
 }
 
 function sleep(ms: number): Promise<void> {
@@ -238,6 +242,10 @@ async function getChannelDetails(channelIds: string[]): Promise<YouTubeChannel[]
             }
           }
 
+          // Extract social links from description
+          const description = item.snippet?.description || '';
+          const socialLinks = extractSocialLinks(description);
+
           channels.push({
             id: item.id!,
             title: item.snippet?.title || 'Unknown',
@@ -247,6 +255,10 @@ async function getChannelDetails(channelIds: string[]): Promise<YouTubeChannel[]
             lastUploadDate,
             channelUrl: `https://www.youtube.com/channel/${item.id}`,
             thumbnailUrl: item.snippet?.thumbnails?.default?.url || '',
+            socialLinks: socialLinks.length > 0 ? JSON.stringify(socialLinks) : undefined,
+            videoCount: parseInt(item.statistics?.videoCount || '0'),
+            avgViews: undefined,
+            engagementRate: undefined,
           });
         }
       }
@@ -259,4 +271,37 @@ async function getChannelDetails(channelIds: string[]): Promise<YouTubeChannel[]
   }
 
   return channels;
+}
+
+function extractSocialLinks(description: string): Array<{ platform: string; url: string }> {
+  const links: Array<{ platform: string; url: string }> = [];
+
+  const patterns = {
+    instagram: /(?:https?:\/\/)?(?:www\.)?instagram\.com\/([a-zA-Z0-9._]+)/gi,
+    twitter: /(?:https?:\/\/)?(?:www\.)?(?:twitter\.com|x\.com)\/([a-zA-Z0-9_]+)/gi,
+    facebook: /(?:https?:\/\/)?(?:www\.)?facebook\.com\/([a-zA-Z0-9.]+)/gi,
+    tiktok: /(?:https?:\/\/)?(?:www\.)?tiktok\.com\/@?([a-zA-Z0-9._]+)/gi,
+    discord: /(?:https?:\/\/)?(?:www\.)?discord\.gg\/([a-zA-Z0-9]+)/gi,
+    twitch: /(?:https?:\/\/)?(?:www\.)?twitch\.tv\/([a-zA-Z0-9_]+)/gi,
+    telegram: /(?:https?:\/\/)?(?:www\.)?t\.me\/([a-zA-Z0-9_]+)/gi,
+    linkedin: /(?:https?:\/\/)?(?:www\.)?linkedin\.com\/in\/([a-zA-Z0-9-]+)/gi,
+    website: /(?:https?:\/\/)?(?:www\.)?([a-zA-Z0-9-]+\.[a-zA-Z]{2,}(?:\/[^\s]*)?)/gi,
+  };
+
+  for (const [platform, pattern] of Object.entries(patterns)) {
+    const matches = description.matchAll(pattern);
+    for (const match of matches) {
+      const url = match[0].startsWith('http') ? match[0] : `https://${match[0]}`;
+
+      // Skip YouTube links
+      if (url.includes('youtube.com') || url.includes('youtu.be')) continue;
+
+      // Avoid duplicates
+      if (!links.find(link => link.url === url)) {
+        links.push({ platform, url });
+      }
+    }
+  }
+
+  return links;
 }

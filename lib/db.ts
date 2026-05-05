@@ -36,7 +36,11 @@ export async function initDatabase() {
       last_upload_date TEXT,
       channel_url TEXT NOT NULL,
       thumbnail_url TEXT,
-      fetched_at TEXT DEFAULT CURRENT_TIMESTAMP
+      fetched_at TEXT DEFAULT CURRENT_TIMESTAMP,
+      social_links TEXT,
+      video_count INTEGER,
+      avg_views INTEGER,
+      engagement_rate REAL
     )
   `);
 
@@ -136,8 +140,8 @@ export async function initDatabase() {
 export async function insertChannel(channel: Omit<Channel, 'fetched_at'>) {
   await client.execute({
     sql: `
-      INSERT INTO channels (id, title, subscribers, language, region, last_upload_date, channel_url, thumbnail_url)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+      INSERT INTO channels (id, title, subscribers, language, region, last_upload_date, channel_url, thumbnail_url, social_links, video_count, avg_views, engagement_rate)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       ON CONFLICT (id) DO UPDATE SET
         title = excluded.title,
         subscribers = excluded.subscribers,
@@ -145,6 +149,10 @@ export async function insertChannel(channel: Omit<Channel, 'fetched_at'>) {
         region = excluded.region,
         last_upload_date = excluded.last_upload_date,
         thumbnail_url = excluded.thumbnail_url,
+        social_links = excluded.social_links,
+        video_count = excluded.video_count,
+        avg_views = excluded.avg_views,
+        engagement_rate = excluded.engagement_rate,
         fetched_at = CURRENT_TIMESTAMP
     `,
     args: [
@@ -156,6 +164,10 @@ export async function insertChannel(channel: Omit<Channel, 'fetched_at'>) {
       channel.last_upload_date,
       channel.channel_url,
       channel.thumbnail_url,
+      channel.social_links || null,
+      channel.video_count || null,
+      channel.avg_views || null,
+      channel.engagement_rate || null,
     ],
   });
 }

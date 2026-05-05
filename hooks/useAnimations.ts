@@ -1,4 +1,4 @@
-import { useEffect, useState, useRef } from 'react';
+import { useEffect, useState, useRef, useCallback } from 'react';
 
 /**
  * useInView Hook
@@ -265,8 +265,12 @@ export function useCountUp(
 ) {
   const [count, setCount] = useState(start);
   const [isAnimating, setIsAnimating] = useState(false);
+  const [hasAnimated, setHasAnimated] = useState(false);
 
-  const animate = () => {
+  const animate = useCallback(() => {
+    if (hasAnimated) return;
+
+    setHasAnimated(true);
     setIsAnimating(true);
     const startTime = Date.now();
     const range = end - start;
@@ -290,7 +294,7 @@ export function useCountUp(
     };
 
     requestAnimationFrame(updateCount);
-  };
+  }, [end, start, duration, hasAnimated]);
 
   return { count, animate, isAnimating };
 }

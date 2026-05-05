@@ -38,6 +38,10 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
           last_upload_date: channel.lastUploadDate,
           channel_url: channel.channelUrl,
           thumbnail_url: channel.thumbnailUrl,
+          social_links: channel.socialLinks,
+          video_count: channel.videoCount,
+          avg_views: channel.avgViews,
+          engagement_rate: channel.engagementRate,
         });
         inserted++;
       } catch (error) {
