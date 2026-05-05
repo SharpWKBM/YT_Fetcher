@@ -138,14 +138,14 @@ async function executeSearch(query: SearchQuery): Promise<string[]> {
   const channelIds: string[] = [];
 
   try {
+    // Search for channels directly instead of videos
     const searchResponse = await youtube.search.list({
       part: ['snippet'],
-      type: ['video'],
+      type: ['channel'],
       q: query.q,
       regionCode: query.regionCode,
       relevanceLanguage: query.relevanceLanguage,
-      publishedBefore: query.publishedBefore,
-      order: query.order,
+      order: 'videoCount', // Channels with more videos
       maxResults: query.maxResults,
     });
 
