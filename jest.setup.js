@@ -21,6 +21,14 @@ async function setupTestDatabase() {
     await client.execute('ALTER TABLE users ADD COLUMN is_admin INTEGER DEFAULT 0');
   }
 
+  if (!columns.includes('stripe_customer_id')) {
+    await client.execute('ALTER TABLE users ADD COLUMN stripe_customer_id TEXT');
+  }
+
+  if (!columns.includes('stripe_subscription_id')) {
+    await client.execute('ALTER TABLE users ADD COLUMN stripe_subscription_id TEXT');
+  }
+
   // Create admin_logs table
   await client.execute(`
     CREATE TABLE IF NOT EXISTS admin_logs (

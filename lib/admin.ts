@@ -17,12 +17,12 @@ export interface User {
 
 export async function initAdminTables() {
   await client.execute(`
-    CREATE TABLE IF NOT EXISTS admin_logs (
+    CREATE TABLE IF NOT EXISTS admin_audit_log (
       id TEXT PRIMARY KEY,
       admin_id TEXT NOT NULL,
       action TEXT NOT NULL,
-      target_type TEXT NOT NULL,
-      target_id TEXT,
+      resource_type TEXT NOT NULL,
+      resource_id TEXT,
       details TEXT,
       ip_address TEXT,
       created_at TEXT DEFAULT CURRENT_TIMESTAMP,
@@ -30,9 +30,8 @@ export async function initAdminTables() {
     )
   `);
 
-  await client.execute(`CREATE INDEX IF NOT EXISTS idx_admin_logs_admin ON admin_logs(admin_id)`);
-  await client.execute(`CREATE INDEX IF NOT EXISTS idx_admin_logs_target ON admin_logs(target_type, target_id)`);
-  await client.execute(`CREATE INDEX IF NOT EXISTS idx_admin_logs_created ON admin_logs(created_at DESC)`);
+  await client.execute(`CREATE INDEX IF NOT EXISTS idx_audit_admin ON admin_audit_log(admin_id)`);
+  await client.execute(`CREATE INDEX IF NOT EXISTS idx_audit_created ON admin_audit_log(created_at)`);
 
   await client.execute(`
     CREATE TABLE IF NOT EXISTS system_settings (
@@ -99,8 +98,8 @@ export async function requireAdmin(
 export async function logAdminAction(
   adminId: string,
   action: string,
-  targetType: string,
-  targetId?: string | null,
+  resourceType: string,
+  resourceId?: string | null,
   details?: any,
   ipAddress?: string | null
 ): Promise<string> {
@@ -108,15 +107,15 @@ export async function logAdminAction(
 
   await client.execute({
     sql: `
-      INSERT INTO admin_logs (id, admin_id, action, target_type, target_id, details, ip_address)
+      INSERT INTO admin_audit_log (id, admin_id, action, resource_type, resource_id, details, ip_address)
       VALUES (?, ?, ?, ?, ?, ?, ?)
     `,
     args: [
       logId,
       adminId,
       action,
-      targetType,
-      targetId || null,
+      resourceType,
+      resourceId || null,
       details ? JSON.stringify(details) : null,
       ipAddress || null,
     ],
@@ -127,14 +126,14 @@ export async function logAdminAction(
 
 export async function getAdminLogs(filters?: {
   adminId?: string;
-  targetType?: string;
+  resourceType?: string;
   action?: string;
   startDate?: string;
   endDate?: string;
   limit?: number;
   offset?: number;
 }) {
-  let sql = 'SELECT * FROM admin_logs WHERE 1=1';
+  let sql = 'SELECT * FROM admin_audit_log WHERE 1=1';
   const args: any[] = [];
 
   if (filters?.adminId) {
@@ -142,9 +141,9 @@ export async function getAdminLogs(filters?: {
     args.push(filters.adminId);
   }
 
-  if (filters?.targetType) {
-    sql += ' AND target_type = ?';
-    args.push(filters.targetType);
+  if (filters?.resourceType) {
+    sql += ' AND resource_type = ?';
+    args.push(filters.resourceType);
   }
 
   if (filters?.action) {

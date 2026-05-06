@@ -137,19 +137,32 @@ export async function discoverChannelsMultiQuery(
 function generateSearchQueries(publishedBefore?: string): SearchQuery[] {
   const queries: SearchQuery[] = [];
 
-  // DRASTICALLY REDUCED: Only 2 categories, 3 languages, 3 regions, 2 keywords each
-  // This generates only 2 × 3 × 3 × 2 = 36 queries instead of 980
-  // Each query costs 100 units, so 36 queries = 3,600 units (fits in one key's daily quota)
-  const priorityCategories = ['Gaming', 'Tech & Science'];
-  const priorityLanguages = ['en', 'ru', 'es'];
-  const priorityRegions = ['US', 'RU', 'BR'];
+  // EXPANDED: 10 categories, 5 languages, 6 regions, 2 keywords each
+  // This generates 10 × 5 × 6 × 2 = 600 queries
+  // Each query costs 100 units, so 600 queries = 60,000 units
+  // With 5 API keys (50K units each = 250K total), we can run this multiple times per day
+  const expandedCategories = [
+    'Gaming',
+    'Tech & Science',
+    'Education',
+    'Entertainment',
+    'Music',
+    'Sports',
+    'Lifestyle',
+    'Business',
+    'News',
+    'Travel'
+  ];
 
-  for (const category of priorityCategories) {
+  const expandedLanguages = ['en', 'es', 'ru', 'pt', 'de'];
+  const expandedRegions = ['US', 'GB', 'CA', 'AU', 'BR', 'RU'];
+
+  for (const category of expandedCategories) {
     const keywords = SEARCH_CONFIG.keywords[category] || [];
 
-    for (const language of priorityLanguages) {
-      for (const region of priorityRegions) {
-        // Only use first 2 keywords per category to reduce quota usage
+    for (const language of expandedLanguages) {
+      for (const region of expandedRegions) {
+        // Use first 2 keywords per category
         for (const keyword of keywords.slice(0, 2)) {
           queries.push({
             q: keyword,
