@@ -23,6 +23,10 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
 
   const { id } = req.query;
 
+  if (!id || Array.isArray(id)) {
+    return res.status(400).json({ error: 'Invalid channel ID' });
+  }
+
   if (req.method === 'GET') {
     const result = await client.execute({
       sql: 'SELECT * FROM channels WHERE id = ?',

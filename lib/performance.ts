@@ -12,7 +12,7 @@ class PerformanceMonitor {
   private maxMetrics: number = 1000;
 
   // Start timing an operation
-  startTimer(name: string): () => void {
+  startTimer(name: string): (metadata?: Record<string, any>) => void {
     const startTime = Date.now();
 
     return (metadata?: Record<string, any>) => {
