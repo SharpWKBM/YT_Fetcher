@@ -21,6 +21,11 @@ export default function Subscription() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [upgrading, setUpgrading] = useState(false);
+  const [mounted, setMounted] = useState(false);
+
+  useEffect(() => {
+    setMounted(true);
+  }, []);
 
   useEffect(() => {
     if (status === 'unauthenticated') {
@@ -89,7 +94,7 @@ export default function Subscription() {
     }
   };
 
-  if (loading) {
+  if (!mounted || loading) {
     return (
       <div className="min-h-screen flex items-center justify-center">
         <div className={animations.shimmer}>Loading subscription...</div>
@@ -134,7 +139,7 @@ export default function Subscription() {
                   Current Plan: <span className="text-indigo-600">{currentTier.toUpperCase()}</span>
                 </div>
                 {isActive && subscription.current_period_end && (
-                  <div className="text-gray-600">
+                  <div className="text-gray-600" suppressHydrationWarning>
                     {subscription.cancel_at_period_end ? 'Cancels' : 'Renews'} on{' '}
                     {new Date(subscription.current_period_end).toLocaleDateString()}
                   </div>
@@ -185,7 +190,7 @@ export default function Subscription() {
             </div>
 
             {/* Pro Tier */}
-            <div className={`${styles.liquidGlass} ${animations.fadeInUp} rounded-2xl p-8 ${currentTier === 'pro' ? 'ring-4 ring-indigo-500' : ''} relative`} style={{ animationDelay: '0.1s' }}>
+            <div className={`${styles.liquidGlass} ${animations.fadeInUp} ${styles.delayShort} rounded-2xl p-8 ${currentTier === 'pro' ? 'ring-4 ring-indigo-500' : ''} relative`}>
               <div className="absolute -top-4 left-1/2 transform -translate-x-1/2">
                 <span className="bg-gradient-to-r from-indigo-600 to-purple-600 text-white px-4 py-1 rounded-full text-sm font-medium">
                   Most Popular
@@ -225,7 +230,7 @@ export default function Subscription() {
             </div>
 
             {/* Enterprise Tier */}
-            <div className={`${styles.liquidGlass} ${animations.fadeInUp} rounded-2xl p-8 ${currentTier === 'enterprise' ? 'ring-4 ring-indigo-500' : ''}`} style={{ animationDelay: '0.2s' }}>
+            <div className={`${styles.liquidGlass} ${animations.fadeInUp} ${styles.delayMedium} rounded-2xl p-8 ${currentTier === 'enterprise' ? 'ring-4 ring-indigo-500' : ''}`}>
               <div className="text-center mb-6">
                 <h3 className="text-2xl font-bold text-gray-900 mb-2">Enterprise</h3>
                 <div className="text-4xl font-bold text-gray-900 mb-2">${SUBSCRIPTION_TIERS.ENTERPRISE.price}</div>
@@ -260,7 +265,7 @@ export default function Subscription() {
           </div>
 
           {/* FAQ Section */}
-          <div className={`${styles.liquidGlass} ${animations.fadeInUp} rounded-2xl p-8 mt-12`} style={{ animationDelay: '0.3s' }}>
+          <div className={`${styles.liquidGlass} ${animations.fadeInUp} ${styles.delayLong} rounded-2xl p-8 mt-12`}>
             <h2 className="text-3xl font-bold text-gray-900 mb-6 text-center">Frequently Asked Questions</h2>
             <div className="space-y-6">
               <div>

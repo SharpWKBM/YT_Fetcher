@@ -94,3 +94,16 @@
 .glowEffect:hover {
   box-shadow: 0 0 40px rgba(99, 102, 241, 0.8);
 }
+
+/* Animation delay utilities */
+.delayShort {
+  animation-delay: 0.1s;
+}
+
+.delayMedium {
+  animation-delay: 0.2s;
+}
+
+.delayLong {
+  animation-delay: 0.3s;
+}
