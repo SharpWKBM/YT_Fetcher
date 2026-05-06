@@ -44,13 +44,16 @@ export async function getOrCreateUser(userId: string, email: string, name: strin
     return result.rows[0] as unknown as User;
   }
 
-  // Create new user
+  // Create new user with 7-day trial
+  const trialEnd = new Date();
+  trialEnd.setDate(trialEnd.getDate() + 7);
+
   await client.execute({
     sql: `
-      INSERT INTO users (id, email, name, tier, channels_viewed_this_month)
-      VALUES (?, ?, ?, 'free', 0)
+      INSERT INTO users (id, email, name, tier, channels_viewed_this_month, subscription_status, trial_ends_at)
+      VALUES (?, ?, ?, 'free', 0, 'trialing', ?)
     `,
-    args: [userId, email, name],
+    args: [userId, email, name, trialEnd.toISOString()],
   });
 
   const newUserResult = await client.execute({
