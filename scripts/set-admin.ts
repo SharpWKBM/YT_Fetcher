@@ -7,7 +7,7 @@ dotenv.config({ path: '.env.local' });
 const client = createClient({
   url: process.env.TURSO_DATABASE_URL!,
   authToken: process.env.TURSO_AUTH_TOKEN!,
-  fetch: (url, init) => {
+  fetch: (url: string, init?: RequestInit) => {
     return fetch(url, {
       ...init,
       signal: AbortSignal.timeout(30000), // 30 second timeout
