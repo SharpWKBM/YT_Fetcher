@@ -1,8 +1,25 @@
 import { createClient } from '@libsql/client';
+import * as dotenv from 'dotenv';
+
+// Load environment variables
+dotenv.config({ path: '.env.local' });
+
+if (!process.env.TURSO_DATABASE_URL || !process.env.TURSO_AUTH_TOKEN) {
+  console.error('❌ Missing required environment variables:');
+  console.error('  TURSO_DATABASE_URL:', process.env.TURSO_DATABASE_URL ? '✓' : '✗');
+  console.error('  TURSO_AUTH_TOKEN:', process.env.TURSO_AUTH_TOKEN ? '✓' : '✗');
+  process.exit(1);
+}
 
 const client = createClient({
-  url: process.env.TURSO_DATABASE_URL || 'file:local.db',
+  url: process.env.TURSO_DATABASE_URL,
   authToken: process.env.TURSO_AUTH_TOKEN,
+  fetch: (url, init) => {
+    return fetch(url, {
+      ...init,
+      signal: AbortSignal.timeout(30000), // 30 second timeout
+    });
+  },
 });
 
 async function migrate() {
