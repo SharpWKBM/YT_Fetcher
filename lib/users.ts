@@ -25,7 +25,14 @@ export async function initUsersTable() {
       tier TEXT DEFAULT 'free' CHECK(tier IN ('free', 'pro', 'enterprise')),
       channels_viewed_this_month INTEGER DEFAULT 0,
       created_at TEXT DEFAULT CURRENT_TIMESTAMP,
-      updated_at TEXT DEFAULT CURRENT_TIMESTAMP
+      updated_at TEXT DEFAULT CURRENT_TIMESTAMP,
+      subscription_status TEXT,
+      trial_ends_at TEXT,
+      stripe_customer_id TEXT,
+      stripe_subscription_id TEXT,
+      stripe_current_period_end TEXT,
+      is_admin INTEGER DEFAULT 0,
+      password_hash TEXT
     )
   `);
 
