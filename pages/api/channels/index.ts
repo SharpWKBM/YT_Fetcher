@@ -1,8 +1,5 @@
 import type { NextApiRequest, NextApiResponse } from 'next';
 import { getChannels } from '@/lib/db';
-import { getServerSession } from 'next-auth/next';
-import { authOptions } from '../auth/[...nextauth]';
-import { getOrCreateUser } from '@/lib/users';
 
 export default async function handler(req: NextApiRequest, res: NextApiResponse) {
   if (req.method !== 'GET') {
@@ -10,19 +7,6 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
   }
 
   try {
-    const session = await getServerSession(req, res, authOptions);
-
-    let isAnonymous = false;
-
-    if (session?.user) {
-      await getOrCreateUser(
-        session.user.email!,
-        session.user.name || null
-      );
-    } else {
-      isAnonymous = true;
-    }
-
     const {
       minSubs,
       maxSubs,
@@ -47,7 +31,6 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
       page: page ? parseInt(page as string) : undefined,
       limit: limit ? parseInt(limit as string) : undefined,
       lastActivityRange: lastActivityRange as '1-3mo' | '3-6mo' | '6-12mo' | '12-24mo' | '24+mo' | undefined,
-      userId: session?.user?.id,
     };
 
     const result = await getChannels(filters);
@@ -77,7 +60,6 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
         total: result.total,
         totalPages: Math.ceil(result.total / result.limit),
       },
-      isAnonymous,
     });
   } catch (error) {
     console.error('Error fetching channels:', error);

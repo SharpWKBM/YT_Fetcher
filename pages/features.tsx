@@ -1,9 +1,7 @@
 import Meta from '@/components/SEO/Meta';
-import { useSession, signIn } from 'next-auth/react';
 import styles from '@/styles/Features.module.css';
 
 export default function Features() {
-  const { data: session } = useSession();
 
   return (
     <>
@@ -158,15 +156,9 @@ export default function Features() {
           <div className={styles.ctaButtons}>
             <button
               className={styles.ctaPrimary}
-              onClick={() => !session ? signIn() : window.location.href = '/'}
+              onClick={() => window.location.href = '/'}
             >
-              {session ? 'Start Searching' : 'Sign Up Free'}
-            </button>
-            <button
-              className={styles.ctaSecondary}
-              onClick={() => window.location.href = '/pricing'}
-            >
-              View Pricing
+              Start Searching
             </button>
           </div>
         </div>

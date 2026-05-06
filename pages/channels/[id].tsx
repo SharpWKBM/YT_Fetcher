@@ -1,5 +1,4 @@
 import { GetServerSideProps } from 'next';
-import { useSession, signIn } from 'next-auth/react';
 import Link from 'next/link';
 import Meta from '@/components/SEO/Meta';
 import Breadcrumbs from '@/components/Breadcrumbs/Breadcrumbs';
@@ -26,8 +25,6 @@ interface ChannelProfileProps {
 }
 
 export default function ChannelProfile({ channel, relatedChannels, error }: ChannelProfileProps) {
-  const { data: session } = useSession();
-  const [isFavorite, setIsFavorite] = useState(false);
 
   if (error) {
     return (
@@ -72,28 +69,6 @@ export default function ChannelProfile({ channel, relatedChannels, error }: Chan
       return <span className={`${styles.inactiveBadge} ${styles.warning}`}>Inactive {months} months</span>;
     }
     return null;
-  };
-
-  const toggleFavorite = async () => {
-    if (!session) {
-      signIn();
-      return;
-    }
-
-    try {
-      const method = isFavorite ? 'DELETE' : 'POST';
-      const response = await fetch('/api/favorites', {
-        method,
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ channelId: channel.id }),
-      });
-
-      if (response.ok) {
-        setIsFavorite(!isFavorite);
-      }
-    } catch (error) {
-      console.error('Error toggling favorite:', error);
-    }
   };
 
   const schema = {
@@ -142,20 +117,6 @@ export default function ChannelProfile({ channel, relatedChannels, error }: Chan
           </Link>
         </div>
 
-        {!session && (
-          <div className={styles.anonymousBanner}>
-            <div>
-              <h3>🔓 Sign up to unlock full access</h3>
-              <p>
-                Create a free account to save favorites, access advanced filters, and view up to 10 channels per month.
-              </p>
-            </div>
-            <button onClick={() => signIn()} className={styles.signUpBtn}>
-              Sign Up Free
-            </button>
-          </div>
-        )}
-
         <div className={styles.profileCard}>
           <div className={styles.profileHeader}>
             {channel.thumbnail_url && (
@@ -166,11 +127,6 @@ export default function ChannelProfile({ channel, relatedChannels, error }: Chan
               <a href={channelUrl} target="_blank" rel="noopener noreferrer" className={styles.channelUrl}>
                 View on YouTube →
               </a>
-              {session && (
-                <button onClick={toggleFavorite} className={styles.favoriteBtn} title="Add to favorites">
-                  {isFavorite ? '★' : '☆'}
-                </button>
-              )}
             </div>
           </div>
 

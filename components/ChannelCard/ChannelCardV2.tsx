@@ -3,7 +3,6 @@ import Image from 'next/image';
 import { useInView, useCountUp, useHover } from '@/hooks/useAnimations';
 import styles from './ChannelCardV2.module.css';
 import animStyles from '@/styles/animations.module.css';
-import BlacklistButton from '@/components/BlacklistButton';
 
 interface Channel {
   id: string;
@@ -214,11 +213,6 @@ export default function ChannelCardV2({
             </div>
           </div>
         )}
-
-        {/* Blacklist Button */}
-        <div className={styles.actions}>
-          <BlacklistButton channelId={channel.id} channelTitle={channel.title} />
-        </div>
       </div>
 
       {/* Glow Effect on Hover */}
