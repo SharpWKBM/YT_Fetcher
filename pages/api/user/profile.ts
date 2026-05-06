@@ -23,7 +23,6 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
           id: user.id,
           email: user.email,
           name: user.name,
-          tier: user.tier,
           created_at: user.created_at,
         },
       });

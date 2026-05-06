@@ -2,7 +2,7 @@ import type { NextApiRequest, NextApiResponse } from 'next';
 import { getChannels } from '@/lib/db';
 import { getServerSession } from 'next-auth/next';
 import { authOptions } from '../auth/[...nextauth]';
-import { getOrCreateUser, incrementChannelsViewed, getChannelsViewedThisMonth, canViewMoreChannels, TIER_LIMITS } from '@/lib/users';
+import { getOrCreateUser } from '@/lib/users';
 
 export default async function handler(req: NextApiRequest, res: NextApiResponse) {
   if (req.method !== 'GET') {
@@ -12,30 +12,15 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
   try {
     const session = await getServerSession(req, res, authOptions);
 
-    let userTier: 'free' | 'pro' | 'enterprise' = 'free';
-    let channelsViewedThisMonth = 0;
-    let canView = true;
     let isAnonymous = false;
-    let subscriptionRequired = false;
 
     if (session?.user) {
-      const user = await getOrCreateUser(
+      await getOrCreateUser(
         session.user.email!,
         session.user.name || null
       );
-
-      userTier = user.tier;
-      channelsViewedThisMonth = await getChannelsViewedThisMonth(session.user.id);
-
-      canView = canViewMoreChannels(userTier, channelsViewedThisMonth);
-
-      if (canView) {
-        await incrementChannelsViewed(session.user.id);
-        channelsViewedThisMonth += 1;
-      }
     } else {
       isAnonymous = true;
-      canView = true;
     }
 
     const {
@@ -60,7 +45,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
       sortBy: sortBy as 'subscribers' | 'last_upload_date',
       order: order as 'ASC' | 'DESC',
       page: page ? parseInt(page as string) : undefined,
-      limit: isAnonymous ? 20 : (limit ? parseInt(limit as string) : undefined),
+      limit: limit ? parseInt(limit as string) : undefined,
       lastActivityRange: lastActivityRange as '1-3mo' | '3-6mo' | '6-12mo' | '12-24mo' | '24+mo' | undefined,
       userId: session?.user?.id,
     };
@@ -92,9 +77,6 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
         total: result.total,
         totalPages: Math.ceil(result.total / result.limit),
       },
-      userTier,
-      channelsViewedThisMonth,
-      tierLimit: TIER_LIMITS[userTier],
       isAnonymous,
     });
   } catch (error) {

@@ -45,7 +45,6 @@ export const authOptions: NextAuthOptions = {
           id: user.id,
           email: user.email,
           name: user.name,
-          tier: user.tier,
         };
       },
     }),
@@ -62,10 +61,6 @@ export const authOptions: NextAuthOptions = {
 
         // Store database user ID in token
         token.sub = dbUser.id;
-        token.tier = dbUser.tier;
-      } else if (user) {
-        // For credentials provider
-        token.tier = user.tier || 'free';
       }
 
       return token;
@@ -73,7 +68,6 @@ export const authOptions: NextAuthOptions = {
     async session({ session, token }) {
       if (session.user) {
         session.user.id = token.sub!;
-        session.user.tier = (token.tier as string) || 'free';
       }
       return session;
     },

@@ -28,29 +28,6 @@ export interface Channel {
   video_count?: number | null;
   avg_views?: number | null;
   engagement_rate?: number | null;
-  status?: 'pending' | 'approved' | 'rejected' | 'blacklisted';
-}
-
-export interface AdminAuditLog {
-  id: string;
-  admin_id: string;
-  action: string;
-  resource_type: string;
-  resource_id: string | null;
-  details: string | null;
-  ip_address: string | null;
-  created_at: string;
-}
-
-export interface SubscriptionEvent {
-  id: string;
-  user_id: string;
-  event_type: string;
-  tier: string;
-  amount: number | null;
-  stripe_event_id: string | null;
-  metadata: string | null;
-  created_at: string;
 }
 
 export async function initDatabase() {
@@ -69,15 +46,13 @@ export async function initDatabase() {
       video_count INTEGER,
       avg_views INTEGER,
       engagement_rate REAL,
-      niche TEXT,
-      status TEXT DEFAULT 'approved' CHECK(status IN ('pending', 'approved', 'rejected', 'blacklisted'))
+      niche TEXT
     )
   `);
 
   await client.execute(`CREATE INDEX IF NOT EXISTS idx_subscribers ON channels(subscribers DESC)`);
   await client.execute(`CREATE INDEX IF NOT EXISTS idx_last_upload ON channels(last_upload_date)`);
   await client.execute(`CREATE INDEX IF NOT EXISTS idx_language ON channels(language)`);
-  await client.execute(`CREATE INDEX IF NOT EXISTS idx_channel_status ON channels(status)`);
 
   // Initialize users table
   await client.execute(`
@@ -85,8 +60,6 @@ export async function initDatabase() {
       id TEXT PRIMARY KEY,
       email TEXT UNIQUE NOT NULL,
       name TEXT,
-      tier TEXT DEFAULT 'free' CHECK(tier IN ('free', 'pro', 'enterprise')),
-      channels_viewed_this_month INTEGER DEFAULT 0,
       created_at TEXT DEFAULT CURRENT_TIMESTAMP,
       updated_at TEXT DEFAULT CURRENT_TIMESTAMP,
       avatar_url TEXT,
@@ -101,18 +74,11 @@ export async function initDatabase() {
       locked_until TEXT,
       password_hash TEXT,
       reset_token TEXT,
-      reset_token_expires TEXT,
-      is_admin INTEGER DEFAULT 0,
-      subscription_status TEXT,
-      stripe_customer_id TEXT,
-      stripe_subscription_id TEXT,
-      stripe_current_period_end TEXT,
-      trial_ends_at TEXT
+      reset_token_expires TEXT
     )
   `);
 
   await client.execute(`CREATE INDEX IF NOT EXISTS idx_user_email ON users(email)`);
-  await client.execute(`CREATE INDEX IF NOT EXISTS idx_user_tier ON users(tier)`);
 
   // Initialize saved_searches table
   await client.execute(`
@@ -591,211 +557,5 @@ export async function getRelatedChannels(excludeChannelId: string, filters: Rela
   return result.rows as unknown as Channel[];
 }
 
-// Admin Audit Log functions
-export async function createAuditLog(
-  adminId: string,
-  action: string,
-  resourceType: string,
-  resourceId: string | null,
-  details: string | null,
-  ipAddress: string | null
-): Promise<string> {
-  const id = `log_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
-  await client.execute({
-    sql: `INSERT INTO admin_audit_log (id, admin_id, action, resource_type, resource_id, details, ip_address)
-          VALUES (?, ?, ?, ?, ?, ?, ?)`,
-    args: [id, adminId, action, resourceType, resourceId, details, ipAddress],
-  });
-  return id;
-}
-
-export async function getAuditLogs(filters: {
-  adminId?: string;
-  action?: string;
-  resourceType?: string;
-  startDate?: string;
-  endDate?: string;
-  page?: number;
-  limit?: number;
-}) {
-  const {
-    adminId,
-    action,
-    resourceType,
-    startDate,
-    endDate,
-    page = 1,
-    limit = 50,
-  } = filters;
-
-  const whereClauses: string[] = ['1=1'];
-  const args: any[] = [];
-
-  if (adminId) {
-    whereClauses.push('admin_id = ?');
-    args.push(adminId);
-  }
-
-  if (action) {
-    whereClauses.push('action = ?');
-    args.push(action);
-  }
-
-  if (resourceType) {
-    whereClauses.push('resource_type = ?');
-    args.push(resourceType);
-  }
-
-  if (startDate) {
-    whereClauses.push('created_at >= ?');
-    args.push(startDate);
-  }
-
-  if (endDate) {
-    whereClauses.push('created_at <= ?');
-    args.push(endDate);
-  }
-
-  const whereClause = whereClauses.join(' AND ');
-  const offset = (page - 1) * limit;
-
-  const result = await client.execute({
-    sql: `SELECT * FROM admin_audit_log WHERE ${whereClause} ORDER BY created_at DESC LIMIT ? OFFSET ?`,
-    args: [...args, limit, offset],
-  });
-
-  const countResult = await client.execute({
-    sql: `SELECT COUNT(*) as total FROM admin_audit_log WHERE ${whereClause}`,
-    args,
-  });
-
-  return {
-    logs: result.rows as unknown as AdminAuditLog[],
-    total: Number(countResult.rows[0].total),
-    page,
-    limit,
-  };
-}
-
-// Subscription Events functions
-export async function createSubscriptionEvent(
-  userId: string,
-  eventType: string,
-  tier: string,
-  amount: number | null,
-  stripeEventId: string | null,
-  metadata: string | null
-): Promise<string> {
-  const id = `evt_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
-  await client.execute({
-    sql: `INSERT INTO subscription_events (id, user_id, event_type, tier, amount, stripe_event_id, metadata)
-          VALUES (?, ?, ?, ?, ?, ?, ?)`,
-    args: [id, userId, eventType, tier, amount, stripeEventId, metadata],
-  });
-  return id;
-}
-
-export async function getSubscriptionEvents(userId: string) {
-  const result = await client.execute({
-    sql: `SELECT * FROM subscription_events WHERE user_id = ? ORDER BY created_at DESC`,
-    args: [userId],
-  });
-  return result.rows as unknown as SubscriptionEvent[];
-}
-
-export async function getAllSubscriptionEvents(filters: {
-  eventType?: string;
-  tier?: string;
-  startDate?: string;
-  endDate?: string;
-  page?: number;
-  limit?: number;
-}) {
-  const {
-    eventType,
-    tier,
-    startDate,
-    endDate,
-    page = 1,
-    limit = 50,
-  } = filters;
-
-  const whereClauses: string[] = ['1=1'];
-  const args: any[] = [];
-
-  if (eventType) {
-    whereClauses.push('event_type = ?');
-    args.push(eventType);
-  }
-
-  if (tier) {
-    whereClauses.push('tier = ?');
-    args.push(tier);
-  }
-
-  if (startDate) {
-    whereClauses.push('created_at >= ?');
-    args.push(startDate);
-  }
-
-  if (endDate) {
-    whereClauses.push('created_at <= ?');
-    args.push(endDate);
-  }
-
-  const whereClause = whereClauses.join(' AND ');
-  const offset = (page - 1) * limit;
-
-  const result = await client.execute({
-    sql: `SELECT * FROM subscription_events WHERE ${whereClause} ORDER BY created_at DESC LIMIT ? OFFSET ?`,
-    args: [...args, limit, offset],
-  });
-
-  const countResult = await client.execute({
-    sql: `SELECT COUNT(*) as total FROM subscription_events WHERE ${whereClause}`,
-    args,
-  });
-
-  return {
-    events: result.rows as unknown as SubscriptionEvent[],
-    total: Number(countResult.rows[0].total),
-    page,
-    limit,
-  };
-}
-
-// Channel status management
-export async function updateChannelStatus(
-  channelId: string,
-  status: 'pending' | 'approved' | 'rejected' | 'blacklisted'
-): Promise<void> {
-  await client.execute({
-    sql: `UPDATE channels SET status = ? WHERE id = ?`,
-    args: [status, channelId],
-  });
-}
-
-export async function getChannelsByStatus(
-  status: 'pending' | 'approved' | 'rejected' | 'blacklisted',
-  page: number = 1,
-  limit: number = 50
-) {
-  const offset = (page - 1) * limit;
-
-  const result = await client.execute({
-    sql: `SELECT * FROM channels WHERE status = ? ORDER BY fetched_at DESC LIMIT ? OFFSET ?`,
-    args: [status, limit, offset],
-  });
-
-  const countResult = await client.execute({
-    sql: `SELECT COUNT(*) as total FROM channels WHERE status = ?`,
-    args: [status],
-  });
-
-  return {
-    channels: result.rows as unknown as Channel[],
-    total: Number(countResult.rows[0].total),
-    page,
-    limit,
-  };
-}
+// End of database functions
+export default client;
