@@ -3,7 +3,6 @@ import { getChannels } from '@/lib/db';
 import { getServerSession } from 'next-auth/next';
 import { authOptions } from '../auth/[...nextauth]';
 import { getOrCreateUser, incrementChannelsViewed, getChannelsViewedThisMonth, canViewMoreChannels, TIER_LIMITS } from '@/lib/users';
-import { hasActiveSubscription, getSubscriptionStatus } from '@/lib/subscription';
 
 export default async function handler(req: NextApiRequest, res: NextApiResponse) {
   if (req.method !== 'GET') {
@@ -21,24 +20,12 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
 
     if (session?.user) {
       const user = await getOrCreateUser(
-        session.user.id,
         session.user.email!,
         session.user.name || null
       );
 
       userTier = user.tier;
       channelsViewedThisMonth = await getChannelsViewedThisMonth(session.user.id);
-
-      const subStatus = await getSubscriptionStatus(session.user.id);
-
-      if (!subStatus.isActive) {
-        return res.status(402).json({
-          error: 'Subscription required',
-          message: 'Please subscribe to access channel data',
-          subscriptionStatus: subStatus,
-          upgradeUrl: '/pricing',
-        });
-      }
 
       canView = canViewMoreChannels(userTier, channelsViewedThisMonth);
 

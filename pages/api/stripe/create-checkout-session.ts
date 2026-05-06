@@ -1,5 +1,6 @@
 import type { NextApiRequest, NextApiResponse } from 'next';
 import { getServerSession } from 'next-auth';
+import { authOptions } from '../auth/[...nextauth]';
 import { stripe, SUBSCRIPTION_TIERS } from '@/lib/stripe';
 
 export default async function handler(req: NextApiRequest, res: NextApiResponse) {
@@ -9,7 +10,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
 
   try {
     // Get user session
-    const session = await getServerSession(req, res, {});
+    const session = await getServerSession(req, res, authOptions);
     if (!session || !session.user?.email) {
       return res.status(401).json({ error: 'Unauthorized' });
     }

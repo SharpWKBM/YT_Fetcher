@@ -40,16 +40,19 @@ export async function initUsersTable() {
   await client.execute(`CREATE INDEX IF NOT EXISTS idx_user_tier ON users(tier)`);
 }
 
-export async function getOrCreateUser(userId: string, email: string, name: string | null): Promise<User> {
-  // Try to get existing user
+export async function getOrCreateUser(email: string, name: string | null): Promise<User> {
+  // Try to get existing user by email
   const result = await client.execute({
-    sql: 'SELECT * FROM users WHERE id = ?',
-    args: [userId],
+    sql: 'SELECT * FROM users WHERE email = ?',
+    args: [email],
   });
 
   if (result.rows.length > 0) {
     return result.rows[0] as unknown as User;
   }
+
+  // Generate new user ID
+  const userId = `user_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
 
   // Create new user with 7-day trial
   const trialEnd = new Date();

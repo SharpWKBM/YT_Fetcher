@@ -3,7 +3,7 @@ import GoogleProvider from 'next-auth/providers/google';
 import GitHubProvider from 'next-auth/providers/github';
 import CredentialsProvider from 'next-auth/providers/credentials';
 import { verifyPassword } from '@/lib/auth';
-import { getUserByEmail, getUserPasswordHash } from '@/lib/users';
+import { getUserByEmail, getUserPasswordHash, getOrCreateUser } from '@/lib/users';
 
 export const authOptions: NextAuthOptions = {
   providers: [
@@ -51,18 +51,31 @@ export const authOptions: NextAuthOptions = {
     }),
   ],
   callbacks: {
+    async jwt({ token, user, account }) {
+      // On sign in (when user object exists)
+      if (user && account) {
+        // Get or create user in database
+        const dbUser = await getOrCreateUser(
+          user.email!,
+          user.name || null
+        );
+
+        // Store database user ID in token
+        token.sub = dbUser.id;
+        token.tier = dbUser.tier;
+      } else if (user) {
+        // For credentials provider
+        token.tier = user.tier || 'free';
+      }
+
+      return token;
+    },
     async session({ session, token }) {
       if (session.user) {
         session.user.id = token.sub!;
         session.user.tier = (token.tier as string) || 'free';
       }
       return session;
-    },
-    async jwt({ token, user }) {
-      if (user) {
-        token.tier = user.tier || 'free';
-      }
-      return token;
     },
   },
   secret: process.env.NEXTAUTH_SECRET,

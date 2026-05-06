@@ -25,7 +25,7 @@ describe('Saved Searches', () => {
     await initDatabase();
 
     // Create test user
-    await getOrCreateUser(testUserId, testUserId, 'Test User');
+    await getOrCreateUser(testUserId, 'Test User');
   });
 
   it('should create a saved search', async () => {
@@ -84,7 +84,7 @@ describe('Favorites', () => {
 
     // Create test users
     await getOrCreateUser(testUserId, testUserId, 'Test User');
-    await getOrCreateUser('other-user@example.com', 'other-user@example.com', 'Other User');
+    await getOrCreateUser('other-user@example.com', 'Other User');
 
     // Insert test channels
     await insertChannel({
