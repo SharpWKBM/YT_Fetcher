@@ -1,14 +1,17 @@
-import type { NextApiRequest, NextApiResponse } from 'next';
 import { buffer } from 'micro';
-import { stripe, getTierFromPriceId } from '@/lib/stripe';
+import type { NextApiRequest, NextApiResponse } from 'next';
+import Stripe from 'stripe';
 import { createClient } from '@libsql/client';
+
+const stripe = new Stripe(process.env.STRIPE_SECRET_KEY!, {
+  apiVersion: '2026-04-22.dahlia',
+});
 
 const client = createClient({
   url: process.env.TURSO_DATABASE_URL!,
   authToken: process.env.TURSO_AUTH_TOKEN!,
 });
 
-// Disable body parsing for webhook
 export const config = {
   api: {
     bodyParser: false,
@@ -27,7 +30,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     return res.status(400).json({ error: 'Missing stripe-signature header' });
   }
 
-  let event;
+  let event: Stripe.Event;
 
   try {
     event = stripe.webhooks.constructEvent(
@@ -40,80 +43,138 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     return res.status(400).json({ error: `Webhook Error: ${err.message}` });
   }
 
-  // Handle the event
   try {
     switch (event.type) {
       case 'checkout.session.completed': {
-        const session = event.data.object;
-        const customerEmail = session.customer_email;
-        const tier = session.metadata?.tier || 'free';
+        const session = event.data.object as Stripe.Checkout.Session;
+        const userId = session.metadata?.userId;
 
-        if (customerEmail) {
-          // Update user tier in database
-          await client.execute({
-            sql: `
-              UPDATE users
-              SET tier = ?, updated_at = CURRENT_TIMESTAMP
-              WHERE email = ?
-            `,
-            args: [tier, customerEmail],
-          });
-
-          console.log(`[Webhook] Updated user ${customerEmail} to ${tier} tier`);
+        if (!userId) {
+          console.error('No userId in checkout session metadata');
+          break;
         }
+
+        const subscriptionResponse = await stripe.subscriptions.retrieve(
+          session.subscription as string
+        );
+        const subscription = subscriptionResponse as any;
+
+        await client.execute({
+          sql: `
+            UPDATE users
+            SET subscription_status = ?,
+                stripe_customer_id = ?,
+                stripe_subscription_id = ?,
+                stripe_current_period_end = ?,
+                trial_ends_at = NULL,
+                updated_at = CURRENT_TIMESTAMP
+            WHERE id = ?
+          `,
+          args: [
+            subscription.status,
+            session.customer as string,
+            session.subscription as string,
+            new Date((subscription.current_period_end || subscription.currentPeriodEnd) * 1000).toISOString(),
+            userId,
+          ],
+        });
+
+        console.log(`Subscription activated for user ${userId}`);
         break;
       }
 
       case 'customer.subscription.updated': {
-        const subscription = event.data.object;
-        const priceId = subscription.items.data[0]?.price.id;
-        const tier = getTierFromPriceId(priceId);
+        const subscription = event.data.object as any;
 
-        // Get customer email
-        const customer = await stripe.customers.retrieve(subscription.customer as string);
-        if ('email' in customer && customer.email) {
-          await client.execute({
-            sql: `
-              UPDATE users
-              SET tier = ?, updated_at = CURRENT_TIMESTAMP
-              WHERE email = ?
-            `,
-            args: [tier, customer.email],
-          });
+        await client.execute({
+          sql: `
+            UPDATE users
+            SET subscription_status = ?,
+                stripe_current_period_end = ?,
+                updated_at = CURRENT_TIMESTAMP
+            WHERE stripe_subscription_id = ?
+          `,
+          args: [
+            subscription.status,
+            new Date((subscription.current_period_end || subscription.currentPeriodEnd) * 1000).toISOString(),
+            subscription.id,
+          ],
+        });
 
-          console.log(`[Webhook] Updated subscription for ${customer.email} to ${tier}`);
-        }
+        console.log(`Subscription updated: ${subscription.id}`);
         break;
       }
 
       case 'customer.subscription.deleted': {
-        const subscription = event.data.object;
+        const subscription = event.data.object as Stripe.Subscription;
 
-        // Get customer email
-        const customer = await stripe.customers.retrieve(subscription.customer as string);
-        if ('email' in customer && customer.email) {
-          // Downgrade to free tier
+        await client.execute({
+          sql: `
+            UPDATE users 
+            SET subscription_status = 'canceled',
+                stripe_subscription_id = NULL,
+                stripe_current_period_end = NULL,
+                updated_at = CURRENT_TIMESTAMP
+            WHERE stripe_subscription_id = ?
+          `,
+          args: [subscription.id],
+        });
+
+        console.log(`Subscription canceled: ${subscription.id}`);
+        break;
+      }
+
+      case 'invoice.payment_failed': {
+        const invoice = event.data.object as any;
+
+        if (invoice.subscription) {
           await client.execute({
             sql: `
               UPDATE users
-              SET tier = 'free', updated_at = CURRENT_TIMESTAMP
-              WHERE email = ?
+              SET subscription_status = 'past_due',
+                  updated_at = CURRENT_TIMESTAMP
+              WHERE stripe_subscription_id = ?
             `,
-            args: [customer.email],
+            args: [invoice.subscription as string],
           });
 
-          console.log(`[Webhook] Downgraded ${customer.email} to free tier`);
+          console.log(`Payment failed for subscription: ${invoice.subscription}`);
         }
         break;
       }
 
+      case 'invoice.payment_succeeded': {
+        const invoice = event.data.object as any;
+
+        if (invoice.subscription) {
+          await client.execute({
+            sql: `
+              UPDATE users
+              SET subscription_status = 'active',
+                  updated_at = CURRENT_TIMESTAMP
+              WHERE stripe_subscription_id = ?
+            `,
+            args: [invoice.subscription as string],
+          });
+
+          console.log(`Payment succeeded for subscription: ${invoice.subscription}`);
+        }
+        break;
+      }
+
+      case 'customer.subscription.trial_will_end': {
+        const subscription = event.data.object as Stripe.Subscription;
+        console.log(`Trial ending soon for subscription: ${subscription.id}`);
+        break;
+      }
+
       default:
-        console.log(`[Webhook] Unhandled event type: ${event.type}`);
+        console.log(`Unhandled event type: ${event.type}`);
     }
 
     res.status(200).json({ received: true });
   } catch (error) {
-    console.error('[Webhook] Error processing event:', error);
-    res.status(500).json({ error: 'Webhook handler failed' });
+    console.error('Error processing webhook:', error);
+    res.status(500).json({ error: 'Webhook processing failed' });
   }
 }

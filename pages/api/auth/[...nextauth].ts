@@ -1,6 +1,9 @@
 import NextAuth, { NextAuthOptions } from 'next-auth';
 import GoogleProvider from 'next-auth/providers/google';
 import GitHubProvider from 'next-auth/providers/github';
+import CredentialsProvider from 'next-auth/providers/credentials';
+import { verifyPassword } from '@/lib/auth';
+import { getUserByEmail, getUserPasswordHash } from '@/lib/users';
 
 export const authOptions: NextAuthOptions = {
   providers: [
@@ -11,6 +14,40 @@ export const authOptions: NextAuthOptions = {
     GitHubProvider({
       clientId: process.env.GITHUB_CLIENT_ID!,
       clientSecret: process.env.GITHUB_CLIENT_SECRET!,
+    }),
+    CredentialsProvider({
+      name: 'Email and Password',
+      credentials: {
+        email: { label: 'Email', type: 'email' },
+        password: { label: 'Password', type: 'password' },
+      },
+      async authorize(credentials) {
+        if (!credentials?.email || !credentials?.password) {
+          throw new Error('Email and password are required');
+        }
+
+        const user = await getUserByEmail(credentials.email);
+        if (!user) {
+          throw new Error('Invalid email or password');
+        }
+
+        const passwordHash = await getUserPasswordHash(user.id);
+        if (!passwordHash) {
+          throw new Error('Invalid email or password');
+        }
+
+        const isValid = await verifyPassword(credentials.password, passwordHash);
+        if (!isValid) {
+          throw new Error('Invalid email or password');
+        }
+
+        return {
+          id: user.id,
+          email: user.email,
+          name: user.name,
+          tier: user.tier,
+        };
+      },
     }),
   ],
   callbacks: {
@@ -23,7 +60,7 @@ export const authOptions: NextAuthOptions = {
     },
     async jwt({ token, user }) {
       if (user) {
-        token.tier = 'free'; // Default tier for new users
+        token.tier = user.tier || 'free';
       }
       return token;
     },

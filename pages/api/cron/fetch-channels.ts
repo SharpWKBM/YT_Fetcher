@@ -17,13 +17,16 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     // Initialize database if needed
     await initDatabase();
 
-    // Use new multi-query search to discover 20 channels per run
+    // Use new multi-query search to discover channels per run
     // (Vercel free tier has 60s timeout, optimized for quick completion)
+    const maxChannels = parseInt(process.env.SCRAPING_MAX_CHANNELS_PER_RUN || '50');
+    const inactiveMonths = parseInt(process.env.SCRAPING_INACTIVITY_MONTHS || '0');
+
     const channels = await discoverChannelsMultiQuery({
       minSubscribers: 10000,
       maxSubscribers: 1000000,
-      inactiveMonths: 12
-    }, 20);
+      inactiveMonths
+    }, maxChannels);
 
     // Store in database
     let inserted = 0;
@@ -42,6 +45,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
           video_count: channel.videoCount,
           avg_views: channel.avgViews,
           engagement_rate: channel.engagementRate,
+          niche: channel.niche,
         });
         inserted++;
       } catch (error) {

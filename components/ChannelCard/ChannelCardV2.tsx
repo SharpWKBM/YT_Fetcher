@@ -1,7 +1,9 @@
-import { useState, useEffect } from 'react';
+﻿import { useState, useEffect } from 'react';
+import Image from 'next/image';
 import { useInView, useCountUp, useHover } from '@/hooks/useAnimations';
 import styles from './ChannelCardV2.module.css';
 import animStyles from '@/styles/animations.module.css';
+import BlacklistButton from '@/components/BlacklistButton';
 
 interface Channel {
   id: string;
@@ -86,12 +88,14 @@ export default function ChannelCardV2({
         {!imageLoaded && (
           <div className={`${styles.thumbnailSkeleton} ${animStyles.skeleton}`} />
         )}
-        <img
+        <Image
           src={channel.thumbnail_url || '/placeholder-channel.png'}
           alt={channel.title}
+          width={160}
+          height={160}
           className={`${styles.thumbnail} ${imageLoaded ? styles.loaded : ''}`}
-          onLoad={() => setImageLoaded(true)}
-          loading="lazy"
+          onLoadingComplete={() => setImageLoaded(true)}
+          quality={85}
         />
 
         {/* Hover Overlay */}
@@ -210,6 +214,11 @@ export default function ChannelCardV2({
             </div>
           </div>
         )}
+
+        {/* Blacklist Button */}
+        <div className={styles.actions}>
+          <BlacklistButton channelId={channel.id} channelTitle={channel.title} />
+        </div>
       </div>
 
       {/* Glow Effect on Hover */}

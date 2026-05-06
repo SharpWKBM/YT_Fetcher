@@ -1,5 +1,6 @@
 import { SEARCH_CONFIG, SearchQuery } from './search-config';
 import { getYouTubeClient, rotateApiKey } from '../youtube';
+import { classifyChannelNiche } from '../classifiers/niche-classifier';
 
 interface SearchFilters {
   minSubscribers: number;
@@ -20,6 +21,7 @@ interface YouTubeChannel {
   videoCount?: number;
   avgViews?: number;
   engagementRate?: number;
+  niche?: string;
 }
 
 function sleep(ms: number): Promise<void> {
@@ -33,9 +35,14 @@ export async function discoverChannelsMultiQuery(
   const discoveredChannels = new Set<string>();
   const allChannels: YouTubeChannel[] = [];
 
-  const inactiveDate = new Date();
-  inactiveDate.setMonth(inactiveDate.getMonth() - filters.inactiveMonths);
-  const publishedBefore = inactiveDate.toISOString();
+  // Only set publishedBefore if inactivity filter is enabled
+  let publishedBefore: string | undefined;
+  let inactiveDate: Date | undefined;
+  if (filters.inactiveMonths > 0) {
+    inactiveDate = new Date();
+    inactiveDate.setMonth(inactiveDate.getMonth() - filters.inactiveMonths);
+    publishedBefore = inactiveDate.toISOString();
+  }
 
   const queries = generateSearchQueries(publishedBefore);
 
@@ -84,11 +91,14 @@ export async function discoverChannelsMultiQuery(
       const channels = await getChannelDetails(filteredIds);
       console.log(`[Multi-Query Search] Got details for ${channels.length} channels`);
 
-      const inactiveChannels = channels.filter(ch => {
-        if (!ch.lastUploadDate) return false;
-        const lastUpload = new Date(ch.lastUploadDate);
-        return lastUpload < inactiveDate;
-      });
+      // Filter by inactivity only if inactiveMonths > 0
+      const inactiveChannels = filters.inactiveMonths > 0 && inactiveDate
+        ? channels.filter(ch => {
+            if (!ch.lastUploadDate) return false;
+            const lastUpload = new Date(ch.lastUploadDate);
+            return lastUpload < inactiveDate;
+          })
+        : channels; // Include all channels if filter disabled
       console.log(`[Multi-Query Search] After inactivity filter: ${inactiveChannels.length} channels`);
 
       for (const channel of inactiveChannels) {
@@ -124,7 +134,7 @@ export async function discoverChannelsMultiQuery(
   return allChannels;
 }
 
-function generateSearchQueries(publishedBefore: string): SearchQuery[] {
+function generateSearchQueries(publishedBefore?: string): SearchQuery[] {
   const queries: SearchQuery[] = [];
 
   // DRASTICALLY REDUCED: Only 2 categories, 3 languages, 3 regions, 2 keywords each
@@ -271,9 +281,13 @@ async function getChannelDetails(channelIds: string[]): Promise<YouTubeChannel[]
           const description = item.snippet?.description || '';
           const socialLinks = extractSocialLinks(description);
 
+          // Classify niche based on title and description
+          const title = item.snippet?.title || 'Unknown';
+          const niche = classifyChannelNiche(title, description);
+
           channels.push({
             id: item.id!,
-            title: item.snippet?.title || 'Unknown',
+            title,
             subscribers: parseInt(item.statistics?.subscriberCount || '0'),
             language: item.snippet?.defaultLanguage || item.snippet?.country || 'unknown',
             region: item.snippet?.country || 'unknown',
@@ -284,6 +298,7 @@ async function getChannelDetails(channelIds: string[]): Promise<YouTubeChannel[]
             videoCount: parseInt(item.statistics?.videoCount || '0'),
             avgViews: undefined,
             engagementRate: undefined,
+            niche,
           });
         }
       }

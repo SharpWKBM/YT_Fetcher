@@ -40,7 +40,8 @@ export async function initDatabase() {
       social_links TEXT,
       video_count INTEGER,
       avg_views INTEGER,
-      engagement_rate REAL
+      engagement_rate REAL,
+      niche TEXT
     )
   `);
 
@@ -67,7 +68,16 @@ export async function initDatabase() {
       two_factor_secret TEXT,
       last_login_at TEXT,
       login_attempts INTEGER DEFAULT 0,
-      locked_until TEXT
+      locked_until TEXT,
+      password_hash TEXT,
+      reset_token TEXT,
+      reset_token_expires TEXT,
+      is_admin INTEGER DEFAULT 0,
+      subscription_status TEXT,
+      stripe_customer_id TEXT,
+      stripe_subscription_id TEXT,
+      stripe_current_period_end TEXT,
+      trial_ends_at TEXT
     )
   `);
 
@@ -140,8 +150,8 @@ export async function initDatabase() {
 export async function insertChannel(channel: Omit<Channel, 'fetched_at'>) {
   await client.execute({
     sql: `
-      INSERT INTO channels (id, title, subscribers, language, region, last_upload_date, channel_url, thumbnail_url, social_links, video_count, avg_views, engagement_rate)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      INSERT INTO channels (id, title, subscribers, language, region, last_upload_date, channel_url, thumbnail_url, social_links, video_count, avg_views, engagement_rate, niche)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       ON CONFLICT (id) DO UPDATE SET
         title = excluded.title,
         subscribers = excluded.subscribers,
@@ -153,6 +163,7 @@ export async function insertChannel(channel: Omit<Channel, 'fetched_at'>) {
         video_count = excluded.video_count,
         avg_views = excluded.avg_views,
         engagement_rate = excluded.engagement_rate,
+        niche = excluded.niche,
         fetched_at = CURRENT_TIMESTAMP
     `,
     args: [
@@ -168,6 +179,7 @@ export async function insertChannel(channel: Omit<Channel, 'fetched_at'>) {
       channel.video_count || null,
       channel.avg_views || null,
       channel.engagement_rate || null,
+      channel.niche || null,
     ],
   });
 }
@@ -178,7 +190,7 @@ export interface ChannelFilters {
   language?: string;
   region?: string;
   inactiveMonths?: number;
-  sortBy?: 'subscribers' | 'last_upload_date';
+  sortBy?: 'subscribers' | 'last_upload_date' | 'niche' | 'tag_count';
   order?: 'ASC' | 'DESC';
   page?: number;
   limit?: number;
@@ -189,6 +201,7 @@ export interface ChannelFilters {
   minEngagementRate?: number;
   hasSocialLinks?: boolean;
   excludeBlacklisted?: boolean;
+  userId?: string;
   lastActivityRange?: '1-3mo' | '3-6mo' | '6-12mo' | '12-24mo' | '24+mo';
 }
 
@@ -203,6 +216,10 @@ export async function getChannels(filters: ChannelFilters = {}) {
     order = 'DESC',
     page = 1,
     limit = 50,
+    lastActivityRange,
+    userId,
+    niche,
+    tags,
   } = filters;
 
   const offset = (page - 1) * limit;
@@ -210,9 +227,18 @@ export async function getChannels(filters: ChannelFilters = {}) {
   inactiveDate.setMonth(inactiveDate.getMonth() - inactiveMonths);
   const inactiveDateStr = inactiveDate.toISOString().split('T')[0];
 
-  const orderByClause = sortBy === 'subscribers'
-    ? `subscribers ${order}`
-    : `last_upload_date ${order}`;
+  let orderByClause = '';
+  if (sortBy === 'subscribers') {
+    orderByClause = `c.subscribers ${order}`;
+  } else if (sortBy === 'last_upload_date') {
+    orderByClause = `c.last_upload_date ${order}`;
+  } else if (sortBy === 'niche') {
+    orderByClause = `c.niche ${order}`;
+  } else if (sortBy === 'tag_count') {
+    orderByClause = `tag_count ${order}`;
+  } else {
+    orderByClause = `c.subscribers ${order}`;
+  }
 
   // Build WHERE clause dynamically based on provided filters
   const whereClauses = [
@@ -236,12 +262,98 @@ export async function getChannels(filters: ChannelFilters = {}) {
     args.push(inactiveDateStr);
   }
 
+  // Handle lastActivityRange filter
+  if (lastActivityRange) {
+    const now = new Date();
+    let startDate: Date;
+    let endDate: Date;
+
+    switch (lastActivityRange) {
+      case '1-3mo':
+        startDate = new Date(now);
+        startDate.setMonth(now.getMonth() - 3);
+        endDate = new Date(now);
+        endDate.setMonth(now.getMonth() - 1);
+        whereClauses.push(`last_upload_date >= ? AND last_upload_date <= ?`);
+        args.push(startDate.toISOString().split('T')[0], endDate.toISOString().split('T')[0]);
+        break;
+      case '3-6mo':
+        startDate = new Date(now);
+        startDate.setMonth(now.getMonth() - 6);
+        endDate = new Date(now);
+        endDate.setMonth(now.getMonth() - 3);
+        whereClauses.push(`last_upload_date >= ? AND last_upload_date <= ?`);
+        args.push(startDate.toISOString().split('T')[0], endDate.toISOString().split('T')[0]);
+        break;
+      case '6-12mo':
+        startDate = new Date(now);
+        startDate.setMonth(now.getMonth() - 12);
+        endDate = new Date(now);
+        endDate.setMonth(now.getMonth() - 6);
+        whereClauses.push(`last_upload_date >= ? AND last_upload_date <= ?`);
+        args.push(startDate.toISOString().split('T')[0], endDate.toISOString().split('T')[0]);
+        break;
+      case '12-24mo':
+        startDate = new Date(now);
+        startDate.setMonth(now.getMonth() - 24);
+        endDate = new Date(now);
+        endDate.setMonth(now.getMonth() - 12);
+        whereClauses.push(`last_upload_date >= ? AND last_upload_date <= ?`);
+        args.push(startDate.toISOString().split('T')[0], endDate.toISOString().split('T')[0]);
+        break;
+      case '24+mo':
+        startDate = new Date(now);
+        startDate.setMonth(now.getMonth() - 24);
+        whereClauses.push(`last_upload_date < ?`);
+        args.push(startDate.toISOString().split('T')[0]);
+        break;
+    }
+  }
+
+  // Add niche filter
+  if (niche) {
+    whereClauses.push(`c.niche = ?`);
+    args.push(niche);
+  }
+
   const whereClause = whereClauses.join(' AND ');
+
+  // Build FROM clause with blacklist join if userId provided
+  let fromClause = 'channels c';
+  let selectClause = 'c.*';
+  let groupByClause = '';
+
+  // Add tags join if tags filter provided
+  if (tags && tags.length > 0) {
+    fromClause += ' INNER JOIN channel_tags ct ON c.id = ct.channel_id';
+    whereClauses.push(`ct.tag IN (${tags.map(() => '?').join(', ')})`);
+    args.push(...tags);
+    selectClause = 'c.*';
+    groupByClause = ' GROUP BY c.id';
+  }
+
+  // Add tag count for sorting
+  if (sortBy === 'tag_count') {
+    if (!tags || tags.length === 0) {
+      fromClause += ' LEFT JOIN channel_tags ct ON c.id = ct.channel_id';
+    }
+    selectClause = 'c.*, COUNT(ct.tag) as tag_count';
+    groupByClause = ' GROUP BY c.id';
+  }
+
+  if (userId) {
+    fromClause += ' LEFT JOIN channel_blacklist cb ON c.id = cb.channel_id AND cb.user_id = ?';
+    args.push(userId);
+    whereClauses.push('cb.id IS NULL');
+  }
+
+  const finalWhereClause = whereClauses.join(' AND ');
 
   const result = await client.execute({
     sql: `
-      SELECT * FROM channels
-      WHERE ${whereClause}
+      SELECT ${selectClause} FROM ${fromClause}
+      WHERE ${finalWhereClause}
+      ${groupByClause}
       ORDER BY ${orderByClause}
       LIMIT ? OFFSET ?
     `,
@@ -250,8 +362,8 @@ export async function getChannels(filters: ChannelFilters = {}) {
 
   const countResult = await client.execute({
     sql: `
-      SELECT COUNT(*) as total FROM channels
-      WHERE ${whereClause}
+      SELECT COUNT(DISTINCT c.id) as total FROM ${fromClause}
+      WHERE ${finalWhereClause}
     `,
     args: args,
   });
@@ -348,4 +460,67 @@ export async function isFavorite(userId: string, channelId: string) {
     args: [userId, channelId],
   });
   return Number(result.rows[0].count) > 0;
+}
+
+// Get single channel by ID
+export async function getChannelById(channelId: string) {
+  const result = await client.execute({
+    sql: `SELECT * FROM channels WHERE id = ?`,
+    args: [channelId],
+  });
+
+  if (result.rows.length === 0) {
+    return null;
+  }
+
+  return result.rows[0] as unknown as Channel;
+}
+
+// Get related channels based on language, region, and subscriber range
+export interface RelatedChannelsFilters {
+  language?: string | null;
+  region?: string | null;
+  subscriberRange?: [number, number];
+  limit?: number;
+}
+
+export async function getRelatedChannels(excludeChannelId: string, filters: RelatedChannelsFilters = {}) {
+  const {
+    language,
+    region,
+    subscriberRange,
+    limit = 6,
+  } = filters;
+
+  const whereClauses: string[] = [`id != ?`];
+  const args: any[] = [excludeChannelId];
+
+  if (language) {
+    whereClauses.push(`language = ?`);
+    args.push(language);
+  }
+
+  if (region) {
+    whereClauses.push(`region = ?`);
+    args.push(region);
+  }
+
+  if (subscriberRange) {
+    whereClauses.push(`subscribers >= ? AND subscribers <= ?`);
+    args.push(subscriberRange[0], subscriberRange[1]);
+  }
+
+  const whereClause = whereClauses.join(' AND ');
+
+  const result = await client.execute({
+    sql: `
+      SELECT * FROM channels
+      WHERE ${whereClause}
+      ORDER BY RANDOM()
+      LIMIT ?
+    `,
+    args: [...args, limit],
+  });
+
+  return result.rows as unknown as Channel[];
 }

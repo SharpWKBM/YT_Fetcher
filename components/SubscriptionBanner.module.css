@@ -1,0 +1,72 @@
+﻿.banner {
+  position: sticky;
+  top: 0;
+  z-index: 100;
+  padding: 12px 20px;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
+}
+
+.trial {
+  background: linear-gradient(135deg, #8b5cf6 0%, #a78bfa 100%);
+  color: white;
+}
+
+.expired {
+  background: linear-gradient(135deg, #ec4899 0%, #f472b6 100%);
+  color: white;
+}
+
+.content {
+  max-width: 1200px;
+  margin: 0 auto;
+  display: flex;
+  align-items: center;
+  gap: 16px;
+}
+
+.icon {
+  font-size: 24px;
+}
+
+.text {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.text strong {
+  font-size: 16px;
+  font-weight: 600;
+}
+
+.text span {
+  font-size: 14px;
+  opacity: 0.9;
+}
+
+.upgradeBtn {
+  padding: 8px 20px;
+  background: white;
+  color: #333;
+  border-radius: 6px;
+  font-weight: 600;
+  text-decoration: none;
+  transition: transform 0.2s;
+}
+
+.upgradeBtn:hover {
+  transform: scale(1.05);
+}
+
+@media (max-width: 768px) {
+  .content {
+    flex-direction: column;
+    text-align: center;
+    gap: 12px;
+  }
+  
+  .text {
+    align-items: center;
+  }
+}

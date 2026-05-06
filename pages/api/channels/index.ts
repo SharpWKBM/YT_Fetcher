@@ -3,6 +3,7 @@ import { getChannels } from '@/lib/db';
 import { getServerSession } from 'next-auth/next';
 import { authOptions } from '../auth/[...nextauth]';
 import { getOrCreateUser, incrementChannelsViewed, getChannelsViewedThisMonth, canViewMoreChannels, TIER_LIMITS } from '@/lib/users';
+import { hasActiveSubscription, getSubscriptionStatus } from '@/lib/subscription';
 
 export default async function handler(req: NextApiRequest, res: NextApiResponse) {
   if (req.method !== 'GET') {
@@ -15,8 +16,9 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     let userTier: 'free' | 'pro' | 'enterprise' = 'free';
     let channelsViewedThisMonth = 0;
     let canView = true;
+    let isAnonymous = false;
+    let subscriptionRequired = false;
 
-    // If user is authenticated, check their tier and usage
     if (session?.user) {
       const user = await getOrCreateUser(
         session.user.id,
@@ -26,13 +28,27 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
 
       userTier = user.tier;
       channelsViewedThisMonth = await getChannelsViewedThisMonth(session.user.id);
+
+      const subStatus = await getSubscriptionStatus(session.user.id);
+
+      if (!subStatus.isActive) {
+        return res.status(402).json({
+          error: 'Subscription required',
+          message: 'Please subscribe to access channel data',
+          subscriptionStatus: subStatus,
+          upgradeUrl: '/pricing',
+        });
+      }
+
       canView = canViewMoreChannels(userTier, channelsViewedThisMonth);
 
-      // Increment view count if they can view
       if (canView) {
         await incrementChannelsViewed(session.user.id);
         channelsViewedThisMonth += 1;
       }
+    } else {
+      isAnonymous = true;
+      canView = true;
     }
 
     const {
@@ -45,6 +61,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
       order,
       page,
       limit,
+      lastActivityRange,
     } = req.query;
 
     const filters = {
@@ -56,7 +73,9 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
       sortBy: sortBy as 'subscribers' | 'last_upload_date',
       order: order as 'ASC' | 'DESC',
       page: page ? parseInt(page as string) : undefined,
-      limit: limit ? parseInt(limit as string) : undefined,
+      limit: isAnonymous ? 20 : (limit ? parseInt(limit as string) : undefined),
+      lastActivityRange: lastActivityRange as '1-3mo' | '3-6mo' | '6-12mo' | '12-24mo' | '24+mo' | undefined,
+      userId: session?.user?.id,
     };
 
     const result = await getChannels(filters);
@@ -89,6 +108,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
       userTier,
       channelsViewedThisMonth,
       tierLimit: TIER_LIMITS[userTier],
+      isAnonymous,
     });
   } catch (error) {
     console.error('Error fetching channels:', error);

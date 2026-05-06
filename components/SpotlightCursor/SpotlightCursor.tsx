@@ -13,8 +13,9 @@ export default function SpotlightCursor() {
 
       spotlightRef.current.style.background = `radial-gradient(
         600px circle at ${x}px ${y}px,
-        rgba(99, 102, 241, 0.15),
-        transparent 40%
+        rgba(99, 102, 241, 0.08),
+        rgba(139, 92, 246, 0.04) 30%,
+        transparent 70%
       )`;
     };
 

@@ -6,7 +6,8 @@
   height: 100%;
   z-index: 1;
   pointer-events: none;
-  transition: background 0.1s ease;
+  transition: background 0.2s ease-out;
+  mix-blend-mode: screen;
 }
 
 @media (prefers-reduced-motion: reduce) {

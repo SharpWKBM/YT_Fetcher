@@ -3,6 +3,9 @@ import { useSession, signIn, signOut } from 'next-auth/react';
 import Meta from '@/components/SEO/Meta';
 import styles from '@/styles/Home.module.css';
 import ChannelCardV2 from '@/components/ChannelCard/ChannelCardV2';
+import SubscriptionBanner from '@/components/SubscriptionBanner';
+import TagFilter from '@/components/TagFilter';
+import NicheFilter from '@/components/NicheFilter';
 
 interface Channel {
   id: string;
@@ -28,6 +31,7 @@ interface ApiResponse {
   userTier?: string;
   channelsViewedThisMonth?: number;
   tierLimit?: number;
+  isAnonymous?: boolean;
 }
 
 interface SavedSearch {
@@ -46,6 +50,7 @@ export default function Home() {
   const [userTier, setUserTier] = useState<string>('free');
   const [channelsViewed, setChannelsViewed] = useState(0);
   const [tierLimit, setTierLimit] = useState(10);
+  const [isAnonymous, setIsAnonymous] = useState(false);
 
   // Saved searches
   const [savedSearches, setSavedSearches] = useState<SavedSearch[]>([]);
@@ -62,7 +67,10 @@ export default function Home() {
   const [language, setLanguage] = useState<string>('');
   const [region, setRegion] = useState<string>('');
   const [inactiveMonths, setInactiveMonths] = useState(0);
-  const [sortBy, setSortBy] = useState<'subscribers' | 'last_upload_date'>('subscribers');
+  const [lastActivityRange, setLastActivityRange] = useState<string>('');
+  const [selectedTags, setSelectedTags] = useState<string[]>([]);
+  const [selectedNiche, setSelectedNiche] = useState<string>('');
+  const [sortBy, setSortBy] = useState<'subscribers' | 'last_upload_date' | 'niche' | 'tag_count'>('subscribers');
   const [order, setOrder] = useState<'ASC' | 'DESC'>('DESC');
   const [page, setPage] = useState(1);
   const [totalPages, setTotalPages] = useState(1);
@@ -72,7 +80,7 @@ export default function Home() {
     if (status !== 'loading') {
       fetchChannels();
     }
-  }, [minSubs, maxSubs, language, region, inactiveMonths, sortBy, order, page, status]);
+  }, [minSubs, maxSubs, language, region, inactiveMonths, sortBy, order, page, status, lastActivityRange, selectedTags, selectedNiche]);
 
   const fetchChannels = async () => {
     setLoading(true);
@@ -92,6 +100,11 @@ export default function Home() {
       // Only add language and region if they are selected
       if (language) params.append('language', language);
       if (region) params.append('region', region);
+      if (lastActivityRange) params.append('lastActivityRange', lastActivityRange);
+      if (selectedNiche) params.append('niche', selectedNiche);
+      if (selectedTags.length > 0) {
+        selectedTags.forEach(tag => params.append('tags', tag));
+      }
 
       const response = await fetch(`/api/channels?${params}`);
       const data: ApiResponse = await response.json();
@@ -103,6 +116,7 @@ export default function Home() {
         if (data.userTier) setUserTier(data.userTier);
         if (data.channelsViewedThisMonth !== undefined) setChannelsViewed(data.channelsViewedThisMonth);
         if (data.tierLimit) setTierLimit(data.tierLimit);
+        if (data.isAnonymous !== undefined) setIsAnonymous(data.isAnonymous);
       } else {
         setError('Failed to fetch channels');
       }
@@ -114,7 +128,7 @@ export default function Home() {
     }
   };
 
-  const handleSort = (column: 'subscribers' | 'last_upload_date') => {
+  const handleSort = (column: 'subscribers' | 'last_upload_date' | 'niche' | 'tag_count') => {
     if (sortBy === column) {
       setOrder(order === 'DESC' ? 'ASC' : 'DESC');
     } else {
@@ -156,6 +170,8 @@ export default function Home() {
         setLanguage('');
         setRegion('');
         setInactiveMonths(0);
+        setSelectedTags([]);
+        setSelectedNiche('');
         break;
       case 'abandoned-large':
         setMinSubs(100000);
@@ -163,6 +179,8 @@ export default function Home() {
         setLanguage('');
         setRegion('');
         setInactiveMonths(12);
+        setSelectedTags([]);
+        setSelectedNiche('');
         break;
       case 'abandoned-medium':
         setMinSubs(10000);
@@ -170,6 +188,8 @@ export default function Home() {
         setLanguage('');
         setRegion('');
         setInactiveMonths(6);
+        setSelectedTags([]);
+        setSelectedNiche('');
         break;
       case 'russian-inactive':
         setMinSubs(10000);
@@ -177,6 +197,8 @@ export default function Home() {
         setLanguage('ru');
         setRegion('CIS');
         setInactiveMonths(6);
+        setSelectedTags([]);
+        setSelectedNiche('');
         break;
       case 'english-inactive':
         setMinSubs(10000);
@@ -184,6 +206,8 @@ export default function Home() {
         setLanguage('en');
         setRegion('US');
         setInactiveMonths(6);
+        setSelectedTags([]);
+        setSelectedNiche('');
         break;
     }
   };
@@ -214,6 +238,9 @@ export default function Home() {
       inactiveMonths,
       sortBy,
       order,
+      lastActivityRange,
+      selectedTags,
+      selectedNiche,
     };
 
     try {
@@ -243,6 +270,9 @@ export default function Home() {
     setInactiveMonths(filters.inactiveMonths || 0);
     setSortBy(filters.sortBy || 'subscribers');
     setOrder(filters.order || 'DESC');
+    setLastActivityRange(filters.lastActivityRange || '');
+    setSelectedTags(filters.selectedTags || []);
+    setSelectedNiche(filters.selectedNiche || '');
     setPage(1);
     setShowSavedSearches(false);
   };
@@ -332,22 +362,80 @@ export default function Home() {
       <Meta
         title="Find Inactive YouTube Channels for Sale | YouTube Channel Finder"
         description="Discover abandoned YouTube channels with 10K-1M+ subscribers. Filter by niche, language, and inactivity. Perfect for channel acquisition and growth opportunities."
-        schema={{
-          "@context": "https://schema.org",
-          "@type": "WebApplication",
-          "name": "YouTube Channel Finder",
-          "description": "Discover inactive YouTube channels with high subscriber counts for acquisition opportunities",
-          "url": process.env.NEXT_PUBLIC_BASE_URL || "https://yourdomain.com",
-          "applicationCategory": "BusinessApplication",
-          "offers": {
-            "@type": "AggregateOffer",
-            "priceCurrency": "USD",
-            "lowPrice": "0",
-            "highPrice": "99",
-            "offerCount": "3"
+        schema={[
+          {
+            "@context": "https://schema.org",
+            "@type": "WebApplication",
+            "name": "YouTube Channel Finder",
+            "description": "Discover inactive YouTube channels with high subscriber counts for acquisition opportunities",
+            "url": process.env.NEXT_PUBLIC_BASE_URL || "https://yourdomain.com",
+            "applicationCategory": "BusinessApplication",
+            "offers": {
+              "@type": "AggregateOffer",
+              "priceCurrency": "USD",
+              "lowPrice": "0",
+              "highPrice": "99",
+              "offerCount": "3"
+            }
+          },
+          {
+            "@context": "https://schema.org",
+            "@type": "FAQPage",
+            "mainEntity": [
+              {
+                "@type": "Question",
+                "name": "What is an inactive YouTube channel?",
+                "acceptedAnswer": {
+                  "@type": "Answer",
+                  "text": "An inactive YouTube channel is one that hasn't uploaded new content for an extended period (typically 3+ months). These channels may be available for acquisition or collaboration opportunities."
+                }
+              },
+              {
+                "@type": "Question",
+                "name": "How often is the channel data updated?",
+                "acceptedAnswer": {
+                  "@type": "Answer",
+                  "text": "Our database is updated daily with the latest subscriber counts, upload dates, and channel information. We monitor thousands of channels to ensure you have access to the most current data."
+                }
+              },
+              {
+                "@type": "Question",
+                "name": "Can I use this tool without signing up?",
+                "acceptedAnswer": {
+                  "@type": "Answer",
+                  "text": "Yes! Anonymous users can browse up to 20 channels per search. Sign up for a free account to view 10 channels per month, save favorites, and access advanced filters."
+                }
+              },
+              {
+                "@type": "Question",
+                "name": "What's included in the Pro plan?",
+                "acceptedAnswer": {
+                  "@type": "Answer",
+                  "text": "Pro users get 100 channel views per month, unlimited saved searches, CSV export functionality, priority support, and access to all advanced filters including language, region, and inactivity period."
+                }
+              },
+              {
+                "@type": "Question",
+                "name": "How do I find channels in a specific niche?",
+                "acceptedAnswer": {
+                  "@type": "Answer",
+                  "text": "Use our advanced filters to narrow down by subscriber count, language, region, and inactivity period. You can also browse by category to find channels that match your target audience."
+                }
+              },
+              {
+                "@type": "Question",
+                "name": "Can I export the channel data?",
+                "acceptedAnswer": {
+                  "@type": "Answer",
+                  "text": "Yes, Pro and Enterprise users can export channel data to CSV format for further analysis. This includes subscriber counts, upload dates, language, region, and direct YouTube links."
+                }
+              }
+            ]
           }
-        }}
+        ]}
       />
+
+      <SubscriptionBanner />
 
       <main className={styles.container}>
         {/* Header */}
@@ -433,6 +521,24 @@ export default function Home() {
         <p className={styles.description}>
           Discover undervalued YouTube channels worldwide with high subscriber counts but inactive uploads. Perfect for acquisition opportunities.
         </p>
+
+        {/* Anonymous User Banner */}
+        {isAnonymous && (
+          <div className={styles.anonymousBanner}>
+            <div>
+              <h3>🔓 Sign up to unlock full access</h3>
+              <p>
+                You're viewing limited results. Sign up for free to view 10 channels per month, save favorites, and access advanced filters.
+              </p>
+            </div>
+            <button
+              onClick={() => signIn()}
+              className={styles.signUpBtn}
+            >
+              Sign Up Free
+            </button>
+          </div>
+        )}
 
         {/* Upgrade Banner */}
         {session && userTier === 'free' && channelsViewed >= tierLimit && (
@@ -533,6 +639,57 @@ export default function Home() {
               <option value={24}>24+ months</option>
             </select>
           </div>
+
+          <div className={styles.filterGroup}>
+            <label>Last Activity Range</label>
+            <select
+              value={lastActivityRange}
+              onChange={(e) => { setLastActivityRange(e.target.value); setPage(1); }}
+            >
+              <option value="">All Channels</option>
+              <option value="1-3mo">1-3 months ago</option>
+              <option value="3-6mo">3-6 months ago</option>
+              <option value="6-12mo">6-12 months ago</option>
+              <option value="12-24mo">12-24 months ago</option>
+              <option value="24+mo">24+ months ago (dormant)</option>
+            </select>
+          </div>
+
+          <div className={styles.filterGroup}>
+            <label>Sort By</label>
+            <select
+              value={sortBy}
+              onChange={(e) => { setSortBy(e.target.value as any); setPage(1); }}
+            >
+              <option value="subscribers">Subscribers</option>
+              <option value="last_upload_date">Last Upload Date</option>
+              <option value="niche">Niche</option>
+              <option value="tag_count">Tag Count</option>
+            </select>
+          </div>
+
+          <div className={styles.filterGroup}>
+            <label>Order</label>
+            <select
+              value={order}
+              onChange={(e) => { setOrder(e.target.value as 'ASC' | 'DESC'); setPage(1); }}
+            >
+              <option value="DESC">Descending</option>
+              <option value="ASC">Ascending</option>
+            </select>
+          </div>
+        </div>
+
+        {/* Tag and Niche Filters */}
+        <div className={styles.advancedFilters}>
+          <TagFilter
+            selectedTags={selectedTags}
+            onTagsChange={(tags) => { setSelectedTags(tags); setPage(1); }}
+          />
+          <NicheFilter
+            selectedNiche={selectedNiche}
+            onNicheChange={(niche) => { setSelectedNiche(niche); setPage(1); }}
+          />
         </div>
 
         {/* Save Search Button */}
@@ -651,6 +808,55 @@ export default function Home() {
             </button>
           </div>
         )}
+
+        {/* FAQ Section */}
+        <div className={styles.faqSection}>
+          <h2>Frequently Asked Questions</h2>
+          <div className={styles.faqGrid}>
+            <div className={styles.faqItem}>
+              <h3>What is an inactive YouTube channel?</h3>
+              <p>
+                An inactive YouTube channel is one that hasn't uploaded new content for an extended period (typically 3+ months).
+                These channels may be available for acquisition or collaboration opportunities.
+              </p>
+            </div>
+            <div className={styles.faqItem}>
+              <h3>How often is the channel data updated?</h3>
+              <p>
+                Our database is updated daily with the latest subscriber counts, upload dates, and channel information.
+                We monitor thousands of channels to ensure you have access to the most current data.
+              </p>
+            </div>
+            <div className={styles.faqItem}>
+              <h3>Can I use this tool without signing up?</h3>
+              <p>
+                Yes! Anonymous users can browse up to 20 channels per search. Sign up for a free account to view 10 channels
+                per month, save favorites, and access advanced filters.
+              </p>
+            </div>
+            <div className={styles.faqItem}>
+              <h3>What's included in the Pro plan?</h3>
+              <p>
+                Pro users get 100 channel views per month, unlimited saved searches, CSV export functionality,
+                priority support, and access to all advanced filters including language, region, and inactivity period.
+              </p>
+            </div>
+            <div className={styles.faqItem}>
+              <h3>How do I find channels in a specific niche?</h3>
+              <p>
+                Use our advanced filters to narrow down by subscriber count, language, region, and inactivity period.
+                You can also browse by category to find channels that match your target audience.
+              </p>
+            </div>
+            <div className={styles.faqItem}>
+              <h3>Can I export the channel data?</h3>
+              <p>
+                Yes, Pro and Enterprise users can export channel data to CSV format for further analysis.
+                This includes subscriber counts, upload dates, language, region, and direct YouTube links.
+              </p>
+            </div>
+          </div>
+        </div>
 
         {/* Footer */}
         <div className={styles.footer}>

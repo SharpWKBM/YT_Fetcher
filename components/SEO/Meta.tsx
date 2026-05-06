@@ -6,7 +6,7 @@ interface MetaProps {
   description: string;
   image?: string;
   type?: string;
-  schema?: object;
+  schema?: object | object[];
   noindex?: boolean;
 }
 
@@ -48,10 +48,20 @@ export default function Meta({
 
       {/* Structured Data */}
       {schema && (
-        <script
-          type="application/ld+json"
-          dangerouslySetInnerHTML={{ __html: JSON.stringify(schema) }}
-        />
+        Array.isArray(schema) ? (
+          schema.map((s, index) => (
+            <script
+              key={index}
+              type="application/ld+json"
+              dangerouslySetInnerHTML={{ __html: JSON.stringify(s) }}
+            />
+          ))
+        ) : (
+          <script
+            type="application/ld+json"
+            dangerouslySetInnerHTML={{ __html: JSON.stringify(schema) }}
+          />
+        )
       )}
     </Head>
   );
