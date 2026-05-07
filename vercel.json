@@ -6,6 +6,10 @@
     {
       "path": "/api/cron/fetch-channels",
       "schedule": "0 2 * * *"
+    },
+    {
+      "path": "/api/cron/enrich-channels",
+      "schedule": "*/10 * * * *"
     }
   ],
   "env": {
