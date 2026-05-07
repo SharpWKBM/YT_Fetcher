@@ -24,7 +24,9 @@ export function rotateApiKey() {
   console.log(`[YouTube API] Rotated to key ${currentKeyIndex + 1}/${API_KEYS.length}`);
 }
 
-const youtube = getYouTubeClient();
+// NOTE: do NOT cache the client here — `getYouTubeClient()` reads `currentKeyIndex`
+// at call time, so a module-level cached value would defeat key rotation entirely.
+// All callers must invoke `getYouTubeClient()` fresh.
 
 export interface YouTubeChannel {
   id: string;
@@ -52,7 +54,7 @@ export async function searchRussianChannels(maxResults: number = 50): Promise<Yo
     for (const query of searchQueries) {
       try {
         // Simple search without date restrictions
-        const searchResponse = await youtube.search.list({
+        const searchResponse = await getYouTubeClient().search.list({
           part: ['snippet'],
           type: ['video'],
           q: query,
@@ -234,8 +236,10 @@ export async function getChannelDetails(channelIds: string[]): Promise<YouTubeCh
         id: channelId,
         title: snippet.title || 'Unknown',
         subscribers: parseInt(statistics.subscriberCount || '0'),
-        language: snippet.defaultLanguage || 'ru',
-        region: snippet.country || 'CIS',
+        // Don't fall back to 'ru'/'CIS' — that mislabels every non-Russian channel
+        // and pollutes the language/region filters in the UI. Leave null when unknown.
+        language: snippet.defaultLanguage || null,
+        region: snippet.country || null,
         lastUploadDate,
         channelUrl: `https://www.youtube.com/channel/${channelId}`,
         thumbnailUrl: snippet.thumbnails?.default?.url || null,
@@ -261,8 +265,8 @@ export async function getChannelDetails(channelIds: string[]): Promise<YouTubeCh
           id: channel.id!,
           title: channel.snippet?.title || 'Unknown',
           subscribers: parseInt(channel.statistics?.subscriberCount || '0'),
-          language: channel.snippet?.defaultLanguage || 'ru',
-          region: channel.snippet?.country || 'CIS',
+          language: channel.snippet?.defaultLanguage || null,
+          region: channel.snippet?.country || null,
           lastUploadDate: null,
           channelUrl: `https://www.youtube.com/channel/${channel.id}`,
           thumbnailUrl: channel.snippet?.thumbnails?.default?.url || null,

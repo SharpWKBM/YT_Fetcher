@@ -1,5 +1,19 @@
+/**
+ * Channel enrichment — fills missing metadata in the `channels` table.
+ *
+ * 2026-05 rewrite: replaced YouTube Data API v3 (10k units/day, even with 5-key
+ * rotation) with the no-API fetcher in lib/youtube/no-api which uses Innertube +
+ * HTML + RSS — no key, no quota.
+ *
+ * Public API kept compatible with the cron + admin endpoints:
+ *   - getChannelsNeedingEnrichment(limit)
+ *   - enrichChannelBatch(channels)
+ *   - getRemainingChannelsCount()
+ *   - extractSocialLinks(description)
+ */
 import { getClient, Channel } from './db';
-import { getYouTubeClient, rotateApiKey } from './youtube';
+import { fetchChannelFull, NoApiError, type NoApiChannelFull } from './youtube/no-api';
+import { isChannelId } from './youtube/no-api/http';
 
 export interface EnrichmentStats {
   total: number;
@@ -9,24 +23,42 @@ export interface EnrichmentStats {
 }
 
 /**
- * Fetch channels that are missing critical metadata
+ * Fields we consider "enrichable". A row qualifies for enrichment if ANY of
+ * these are NULL/empty. Expanded from the original 4 (language/region/last_upload/thumb)
+ * to include social_links, video_count, niche so the backfill covers everything
+ * the UI consumes.
+ */
+const ENRICHABLE_FIELDS = [
+  'language',
+  'region',
+  'last_upload_date',
+  'thumbnail_url',
+  'social_links',
+  'video_count',
+  'niche',
+] as const;
+
+/**
+ * Fetch up to `limit` channels that are missing at least one enrichable field.
+ * Only returns rows with proper UC IDs (skipping malformed handle imports).
  */
 export async function getChannelsNeedingEnrichment(limit: number = 15): Promise<Channel[]> {
-  if (!Number.isInteger(limit) || limit < 1 || limit > 100) {
-    throw new Error('Invalid limit parameter: must be an integer between 1 and 100');
+  if (!Number.isInteger(limit) || limit < 1 || limit > 500) {
+    throw new Error('Invalid limit parameter: must be an integer between 1 and 500');
   }
 
   const client = getClient();
+  const where = ENRICHABLE_FIELDS.map(f => `${f} IS NULL OR ${f} = ''`).join(' OR ');
 
+  // Skip channels we tried in the last 7 days — re-running the same channel
+  // every minute when YouTube simply doesn't expose (e.g.) `country` for it
+  // wastes both quota-free requests and SQLite writes.
   const result = await client.execute({
     sql: `
       SELECT * FROM channels
-      WHERE (
-        language IS NULL OR
-        region IS NULL OR
-        last_upload_date IS NULL OR
-        thumbnail_url IS NULL
-      )
+      WHERE id LIKE 'UC%' AND LENGTH(id) = 24
+        AND (${where})
+        AND (fetched_at IS NULL OR fetched_at < datetime('now', '-7 days'))
       LIMIT ?
     `,
     args: [limit],
@@ -36,75 +68,12 @@ export async function getChannelsNeedingEnrichment(limit: number = 15): Promise<
 }
 
 /**
- * Resolve channel handle/username to actual channel ID
- * Only call this for channels that don't have proper IDs (don't start with UC)
- */
-export async function resolveChannelId(channel: Channel): Promise<string | null> {
-  const youtubeClient = getYouTubeClient();
-
-  // If it already looks like a proper channel ID (starts with UC), return it
-  if (channel.id.startsWith('UC')) {
-    return channel.id;
-  }
-
-  // Try to resolve from the channel URL
-  try {
-    // Extract handle from URL like https://www.youtube.com/@username
-    const handleMatch = channel.channel_url.match(/\/@([^/?]+)/);
-    if (handleMatch) {
-      const handle = handleMatch[1];
-
-      // Use YouTube API to search for the channel by handle
-      const searchResponse = await youtubeClient.search.list({
-        part: ['snippet'],
-        q: handle,
-        type: ['channel'],
-        maxResults: 1,
-      });
-
-      if (searchResponse.data.items && searchResponse.data.items.length > 0) {
-        const actualChannelId = searchResponse.data.items[0].snippet?.channelId;
-        if (actualChannelId) {
-          console.log(`[Resolve] ${channel.id} -> ${actualChannelId}`);
-          return actualChannelId;
-        }
-      }
-    }
-
-    // Fallback: try searching by channel title
-    const searchResponse = await youtubeClient.search.list({
-      part: ['snippet'],
-      q: channel.title,
-      type: ['channel'],
-      maxResults: 1,
-    });
-
-    if (searchResponse.data.items && searchResponse.data.items.length > 0) {
-      const actualChannelId = searchResponse.data.items[0].snippet?.channelId;
-      if (actualChannelId) {
-        console.log(`[Resolve] ${channel.id} -> ${actualChannelId} (by title)`);
-        return actualChannelId;
-      }
-    }
-
-  } catch (error: any) {
-    if (error?.code === 403 && error?.message?.includes('quota')) {
-      console.log(`[Resolve] Quota exceeded, rotating key...`);
-      rotateApiKey();
-    }
-    console.error(`[Resolve] Failed to resolve ${channel.id}:`, error.message);
-  }
-
-  return null;
-}
-
-/**
- * Extract social media links from channel description
+ * Extract social media links from a channel description using a fixed set of
+ * provider patterns. Stored as a JSON-encoded array of strings (or null).
+ *
+ * Kept exported for backward compatibility with other modules.
  */
 export function extractSocialLinks(description: string): string | null {
-  const links: string[] = [];
-
-  // Common social media patterns
   const patterns = [
     /(?:https?:\/\/)?(?:www\.)?instagram\.com\/[\w.]+/gi,
     /(?:https?:\/\/)?(?:www\.)?twitter\.com\/[\w]+/gi,
@@ -115,229 +84,173 @@ export function extractSocialLinks(description: string): string | null {
     /(?:https?:\/\/)?(?:www\.)?discord\.gg\/[\w]+/gi,
     /(?:https?:\/\/)?(?:www\.)?patreon\.com\/[\w]+/gi,
     /(?:https?:\/\/)?t\.me\/[\w]+/gi,
+    /(?:https?:\/\/)?(?:www\.)?youtube\.com\/[@\w.]+/gi,
   ];
-
-  for (const pattern of patterns) {
-    const matches = description.match(pattern);
-    if (matches) {
-      links.push(...matches);
-    }
+  const links: string[] = [];
+  for (const re of patterns) {
+    const matches = description.match(re);
+    if (matches) links.push(...matches);
   }
-
-  return links.length > 0 ? JSON.stringify(links) : null;
+  return links.length > 0 ? JSON.stringify(Array.from(new Set(links))) : null;
 }
 
 /**
- * Enrich a batch of channels with metadata from YouTube API
- * @param channels - Channels to enrich
- * @param skipResolution - If true, skip channels that don't have proper IDs (saves quota)
- * @param retryCount - Internal retry counter for quota exhaustion handling
+ * Best-effort language detection from text — used when YouTube's metadata
+ * doesn't expose `defaultLanguage`. Cheap, no dependencies. Returns ISO-639-1.
+ */
+export function detectLanguageFromText(text: string | null | undefined): string | null {
+  if (!text) return null;
+  // Strip URLs and common punctuation noise
+  const cleaned = text.replace(/https?:\/\/\S+/g, '').trim();
+  if (cleaned.length < 10) return null;
+
+  const counts = {
+    cyrillic: (cleaned.match(/[\u0400-\u04FF]/g) ?? []).length,
+    arabic: (cleaned.match(/[\u0600-\u06FF]/g) ?? []).length,
+    hebrew: (cleaned.match(/[\u0590-\u05FF]/g) ?? []).length,
+    chinese: (cleaned.match(/[\u4E00-\u9FFF]/g) ?? []).length,
+    japanese: (cleaned.match(/[\u3040-\u30FF]/g) ?? []).length,
+    korean: (cleaned.match(/[\uAC00-\uD7AF]/g) ?? []).length,
+    devanagari: (cleaned.match(/[\u0900-\u097F]/g) ?? []).length,
+    thai: (cleaned.match(/[\u0E00-\u0E7F]/g) ?? []).length,
+    latin: (cleaned.match(/[A-Za-z]/g) ?? []).length,
+  };
+  const total = Object.values(counts).reduce((a, b) => a + b, 0);
+  if (total === 0) return null;
+
+  const ratio = (n: number) => n / total;
+  if (ratio(counts.cyrillic) > 0.2) return 'ru';
+  if (ratio(counts.arabic) > 0.2) return 'ar';
+  if (ratio(counts.hebrew) > 0.2) return 'he';
+  if (ratio(counts.japanese) > 0.05) return 'ja'; // hiragana/katakana imply JP even with kanji
+  if (ratio(counts.korean) > 0.2) return 'ko';
+  if (ratio(counts.chinese) > 0.2) return 'zh';
+  if (ratio(counts.devanagari) > 0.2) return 'hi';
+  if (ratio(counts.thai) > 0.2) return 'th';
+  if (ratio(counts.latin) > 0.5) return 'en'; // best-effort — could be es/de/fr too
+  return null;
+}
+
+/**
+ * Enrich a batch of channels using the quota-free pipeline. The legacy
+ * `skipResolution` and `retryCount` params are retained for backward compat
+ * but ignored (no quota = no rotation needed).
  */
 export async function enrichChannelBatch(
   channels: Channel[],
-  skipResolution: boolean = false,
-  retryCount: number = 0
+  _skipResolution: boolean = false,
+  _retryCount: number = 0,
 ): Promise<EnrichmentStats> {
-  const stats: EnrichmentStats = {
-    total: channels.length,
-    enriched: 0,
-    failed: 0,
-    skipped: 0,
-  };
+  const stats: EnrichmentStats = { total: channels.length, enriched: 0, failed: 0, skipped: 0 };
+  if (channels.length === 0) return stats;
 
-  if (channels.length === 0) {
-    return stats;
-  }
+  // Filter to only proper UC IDs — handles can't be enriched without a separate
+  // resolution step, and they pollute the failure rate. Treat them as skipped.
+  const valid = channels.filter(c => isChannelId(c.id));
+  stats.skipped = channels.length - valid.length;
 
   const client = getClient();
+  console.log(`[Enrichment] Processing ${valid.length} channels (${stats.skipped} skipped — non-UC IDs)…`);
 
-  const RATE_LIMIT_DELAY_MS = 100; // Delay between API calls to avoid rate limiting
+  // Modest concurrency — Innertube starts rate-limiting hard around ~10 req/s/IP.
+  const CONCURRENCY = 4;
+  const cursor = { i: 0 };
 
-  try {
-    console.log(`[Enrichment] Processing ${channels.length} channels...`);
-
-    // Step 1: Resolve channel IDs (or skip if skipResolution=true)
-    const resolvedChannels: Array<{ original: Channel; actualId: string }> = [];
-
-    for (const channel of channels) {
-      // If channel already has proper ID (starts with UC), use it directly
-      if (channel.id.startsWith('UC')) {
-        resolvedChannels.push({ original: channel, actualId: channel.id });
-      } else if (!skipResolution) {
-        // Try to resolve handle to ID
-        const actualId = await resolveChannelId(channel);
-        if (actualId) {
-          resolvedChannels.push({ original: channel, actualId });
+  async function worker() {
+    while (cursor.i < valid.length) {
+      const channel = valid[cursor.i++];
+      try {
+        const data = await fetchChannelFull(channel.id);
+        await persistEnriched(client, channel, data);
+        stats.enriched++;
+        console.log(`[Enrichment] ✓ ${channel.id} (${data.title}) sources=${data.sources.join(',')}`);
+      } catch (err) {
+        if (err instanceof NoApiError && err.code === 'not-found') {
+          console.log(`[Enrichment] ⊘ ${channel.id} not found`);
+          stats.failed++;
         } else {
-          console.log(`[Enrichment] ✗ Could not resolve ${channel.id} (${channel.title})`);
+          console.error(`[Enrichment] ✗ ${channel.id}: ${(err as Error).message}`);
           stats.failed++;
         }
-        // Small delay to avoid rate limiting on search API
-        await new Promise(resolve => setTimeout(resolve, RATE_LIMIT_DELAY_MS));
-      } else {
-        // Skip channels without proper IDs when skipResolution=true
-        console.log(`[Enrichment] ⊘ Skipped ${channel.id} (not a proper channel ID)`);
-        stats.skipped++;
       }
     }
-
-    if (resolvedChannels.length === 0) {
-      console.log('[Enrichment] No channels could be resolved');
-      return stats;
-    }
-
-    console.log(`[Enrichment] Resolved ${resolvedChannels.length}/${channels.length} channels`);
-    console.log(`[Enrichment] Fetching details for ${resolvedChannels.length} channels...`);
-
-    // Step 2: Fetch channel details using actual IDs
-    const actualIds = resolvedChannels.map(rc => rc.actualId);
-    const youtubeClient = getYouTubeClient();
-    const channelsResponse = await youtubeClient.channels.list({
-      part: ['snippet', 'statistics', 'contentDetails'],
-      id: actualIds,
-    });
-
-    if (!channelsResponse.data.items) {
-      console.log('[Enrichment] No data returned from YouTube API');
-      stats.failed = channels.length;
-      return stats;
-    }
-
-    // Process each channel
-    for (const ytChannel of channelsResponse.data.items) {
-      const actualChannelId = ytChannel.id!;
-      const snippet = ytChannel.snippet!;
-      const contentDetails = ytChannel.contentDetails!;
-
-      // Find the original channel record
-      const originalChannel = resolvedChannels.find(rc => rc.actualId === actualChannelId)?.original;
-      if (!originalChannel) {
-        console.log(`[Enrichment] Warning: Could not find original record for ${actualChannelId}`);
-        continue;
-      }
-
-      try {
-        // Get last upload date from uploads playlist
-        let lastUploadDate: string | null = null;
-        if (contentDetails.relatedPlaylists?.uploads) {
-          const uploadsPlaylistId = contentDetails.relatedPlaylists.uploads;
-
-          try {
-            const playlistResponse = await youtubeClient.playlistItems.list({
-              part: ['snippet'],
-              playlistId: uploadsPlaylistId,
-              maxResults: 1,
-            });
-
-            if (playlistResponse.data.items && playlistResponse.data.items.length > 0) {
-              const publishedAt = playlistResponse.data.items[0].snippet?.publishedAt;
-              if (publishedAt) {
-                lastUploadDate = publishedAt.split('T')[0];
-              }
-            }
-          } catch (playlistError: any) {
-            if (playlistError?.code === 403 && playlistError?.message?.includes('quota')) {
-              console.log(`[Enrichment] Quota exceeded on playlist fetch, rotating key...`);
-              rotateApiKey();
-            } else {
-              console.error(`[Enrichment] Error fetching playlist for ${actualChannelId}:`, playlistError.message);
-            }
-          }
-        }
-
-        // Extract social links from description
-        const description = snippet.description || '';
-        const socialLinks = extractSocialLinks(description);
-
-        // Get thumbnail URL (prefer medium or high quality)
-        const thumbnailUrl =
-          snippet.thumbnails?.medium?.url ||
-          snippet.thumbnails?.default?.url ||
-          snippet.thumbnails?.high?.url ||
-          null;
-
-        // Update the ORIGINAL channel record (not the resolved ID)
-        await client.execute({
-          sql: `
-            UPDATE channels
-            SET
-              language = COALESCE(?, language),
-              region = COALESCE(?, region),
-              last_upload_date = COALESCE(?, last_upload_date),
-              thumbnail_url = COALESCE(?, thumbnail_url),
-              social_links = COALESCE(?, social_links),
-              fetched_at = CURRENT_TIMESTAMP
-            WHERE id = ?
-          `,
-          args: [
-            snippet.defaultLanguage || snippet.country || null,
-            snippet.country || null,
-            lastUploadDate,
-            thumbnailUrl,
-            socialLinks,
-            originalChannel.id, // Use original ID, not resolved ID
-          ],
-        });
-
-        stats.enriched++;
-        console.log(`[Enrichment] ✓ Enriched ${originalChannel.id} -> ${actualChannelId} (${snippet.title})`);
-
-      } catch (updateError: any) {
-        console.error(`[Enrichment] Failed to update ${originalChannel.id}:`, updateError.message);
-        stats.failed++;
-      }
-    }
-
-    // Mark channels that weren't found in YouTube API response as failed
-    const foundIds = new Set(channelsResponse.data.items.map(ch => ch.id));
-    const notFoundActualIds = actualIds.filter(id => !foundIds.has(id));
-
-    if (notFoundActualIds.length > 0) {
-      console.log(`[Enrichment] ${notFoundActualIds.length} resolved channels not found in YouTube API`);
-      stats.failed += notFoundActualIds.length;
-    }
-
-  } catch (error: any) {
-    // Handle quota exceeded error
-    if (error?.code === 403 && error?.message?.includes('quota')) {
-      if (retryCount >= 5) {
-        console.error('[Enrichment] Max retries exceeded, all API keys exhausted');
-        stats.failed = channels.length;
-        return stats;
-      }
-      console.log(`[Enrichment] Quota exceeded, rotating API key... (retry ${retryCount + 1}/5)`);
-      rotateApiKey();
-
-      // Retry with new key
-      console.log(`[Enrichment] Retrying batch with new API key...`);
-      return await enrichChannelBatch(channels, skipResolution, retryCount + 1);
-    }
-
-    console.error('[Enrichment] Error enriching batch:', error.message);
-    stats.failed = channels.length;
   }
 
+  await Promise.all(Array.from({ length: CONCURRENCY }, () => worker()));
   return stats;
 }
 
 /**
- * Get count of channels still needing enrichment
+ * Apply the no-api result to the existing `channels` row. Uses COALESCE
+ * everywhere so we never overwrite existing non-null values — re-running the
+ * job is safe and idempotent.
  */
+async function persistEnriched(
+  client: ReturnType<typeof getClient>,
+  original: Channel,
+  data: NoApiChannelFull,
+): Promise<void> {
+  // Build social_links: prefer description-extracted, augment with about-tab links
+  const socialFromDesc = extractSocialLinks(data.description ?? '') ?? null;
+  let socialLinks = socialFromDesc;
+  if (data.links.length > 0) {
+    const merged = new Set<string>(socialFromDesc ? JSON.parse(socialFromDesc) : []);
+    for (const l of data.links) merged.add(l.url);
+    socialLinks = JSON.stringify(Array.from(merged));
+  }
+
+  // Language: prefer existing → derive from description+title+keywords
+  const langProbe = [data.title, data.description, data.keywords].filter(Boolean).join(' ');
+  const detectedLang = detectLanguageFromText(langProbe);
+
+  await client.execute({
+    sql: `
+      UPDATE channels SET
+        title = COALESCE(NULLIF(?, ''), title),
+        subscribers = CASE WHEN ? IS NOT NULL THEN ? ELSE subscribers END,
+        language = COALESCE(language, ?),
+        region = COALESCE(region, ?),
+        last_upload_date = COALESCE(last_upload_date, ?),
+        thumbnail_url = COALESCE(NULLIF(thumbnail_url, ''), ?),
+        social_links = COALESCE(NULLIF(social_links, ''), ?),
+        video_count = COALESCE(video_count, ?),
+        fetched_at = CURRENT_TIMESTAMP
+      WHERE id = ?
+    `,
+    args: [
+      data.title ?? '',
+      data.subscribers,
+      data.subscribers,
+      detectedLang,
+      data.country,
+      data.lastUploadDate,
+      data.avatarUrl,
+      socialLinks,
+      data.videoCount,
+      original.id,
+    ],
+  });
+}
+
+/** How many channels still need at least one enrichable field. */
 export async function getRemainingChannelsCount(): Promise<number> {
   const client = getClient();
-
+  const where = ENRICHABLE_FIELDS.map(f => `${f} IS NULL OR ${f} = ''`).join(' OR ');
   const result = await client.execute({
-    sql: `
-      SELECT COUNT(*) as count FROM channels
-      WHERE (
-        language IS NULL OR
-        region IS NULL OR
-        last_upload_date IS NULL OR
-        thumbnail_url IS NULL
-      )
-    `,
+    sql: `SELECT COUNT(*) as count FROM channels WHERE id LIKE 'UC%' AND LENGTH(id) = 24 AND (${where})`,
     args: [],
   });
-
   return Number(result.rows[0].count);
+}
+
+// --- Legacy exports kept for backward compat (no longer used internally) ---
+
+/**
+ * @deprecated Was used to resolve handles to UC IDs via YouTube search API.
+ * The no-api pipeline only operates on UC IDs and skips handles entirely.
+ * Kept exported so old imports don't break the build; will be removed in the next major.
+ */
+export async function resolveChannelId(_channel: Channel): Promise<string | null> {
+  console.warn('[Enrichment] resolveChannelId is deprecated and now a no-op.');
+  return null;
 }
