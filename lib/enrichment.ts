@@ -38,30 +38,57 @@ const ENRICHABLE_FIELDS = [
   'niche',
 ] as const;
 
+export interface NeedsEnrichmentOptions {
+  /**
+   * If set, skip channels that were touched within this many days. The cron
+   * job uses 7 to avoid re-fetching the same channel every minute when YouTube
+   * doesn't expose certain fields. The bulk backfill passes `0` to enrich
+   * every row at least once regardless of when it was inserted.
+   */
+  cooldownDays?: number;
+  /**
+   * Only return rows with id > this. Used by the bulk backfill to walk the
+   * table monotonically by primary key, so we never re-process the same row
+   * twice in a single run regardless of which fields it still has NULL.
+   */
+  afterId?: string;
+}
+
 /**
  * Fetch up to `limit` channels that are missing at least one enrichable field.
  * Only returns rows with proper UC IDs (skipping malformed handle imports).
  */
-export async function getChannelsNeedingEnrichment(limit: number = 15): Promise<Channel[]> {
+export async function getChannelsNeedingEnrichment(
+  limit: number = 15,
+  opts: NeedsEnrichmentOptions = {},
+): Promise<Channel[]> {
   if (!Number.isInteger(limit) || limit < 1 || limit > 500) {
     throw new Error('Invalid limit parameter: must be an integer between 1 and 500');
   }
 
   const client = getClient();
   const where = ENRICHABLE_FIELDS.map(f => `${f} IS NULL OR ${f} = ''`).join(' OR ');
+  const cooldownDays = opts.cooldownDays ?? 7;
+  const cooldownClause = cooldownDays > 0
+    ? ` AND (fetched_at IS NULL OR fetched_at < datetime('now', '-${cooldownDays} days'))`
+    : '';
 
-  // Skip channels we tried in the last 7 days — re-running the same channel
-  // every minute when YouTube simply doesn't expose (e.g.) `country` for it
-  // wastes both quota-free requests and SQLite writes.
+  const afterClause = opts.afterId ? ` AND id > ?` : '';
+  // Always order by id so paginated walks are deterministic; non-paginated
+  // callers (cron) pay a negligible sort cost since LIMIT is small.
+  const orderClause = ` ORDER BY id ASC`;
+  const args: (string | number)[] = [];
+  if (opts.afterId) args.push(opts.afterId);
+  args.push(limit);
+
   const result = await client.execute({
     sql: `
       SELECT * FROM channels
       WHERE id LIKE 'UC%' AND LENGTH(id) = 24
-        AND (${where})
-        AND (fetched_at IS NULL OR fetched_at < datetime('now', '-7 days'))
+        AND (${where})${cooldownClause}${afterClause}${orderClause}
       LIMIT ?
     `,
-    args: [limit],
+    args,
   });
 
   return result.rows as unknown as Channel[];
