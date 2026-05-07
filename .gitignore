@@ -27,6 +27,10 @@ yarn-error.log*
 .env.*
 !.env.example
 
+# backfill resume state
+scripts/.backfill-checkpoint.json
+scripts/.backfill-checkpoint.json.tmp
+
 # vercel
 .vercel
 

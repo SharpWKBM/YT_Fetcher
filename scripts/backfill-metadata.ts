@@ -16,17 +16,65 @@
  *   npx tsx scripts/backfill-metadata.ts --dry-run         # preview only, no DB writes
  */
 import 'dotenv/config';
+import * as fs from 'fs';
+import * as path from 'path';
 import {
   enrichChannelBatch,
   getChannelsNeedingEnrichment,
   getRemainingChannelsCount,
 } from '../lib/enrichment';
 
+/**
+ * Checkpoint file lives next to the script. Single line of JSON with the last
+ * channel id we touched + a tiny stats blob. Survives PC sleep, crashes, and
+ * Ctrl+C. Delete the file (or pass --reset) to start over from id 0.
+ */
+const CHECKPOINT_PATH = path.join(__dirname, '.backfill-checkpoint.json');
+
+interface Checkpoint {
+  lastId: string | null;
+  processed: number;
+  totalOk: number;
+  totalFailed: number;
+  startedAt: string;
+  updatedAt: string;
+}
+
+function readCheckpoint(): Checkpoint | null {
+  try {
+    if (!fs.existsSync(CHECKPOINT_PATH)) return null;
+    const raw = fs.readFileSync(CHECKPOINT_PATH, 'utf8');
+    return JSON.parse(raw) as Checkpoint;
+  } catch {
+    return null;
+  }
+}
+
+function writeCheckpoint(cp: Checkpoint): void {
+  // Atomic write: write to temp file, rename. Avoids partial writes on crash.
+  const tmp = CHECKPOINT_PATH + '.tmp';
+  fs.writeFileSync(tmp, JSON.stringify(cp, null, 2));
+  fs.renameSync(tmp, CHECKPOINT_PATH);
+}
+
+function deleteCheckpoint(): void {
+  try {
+    fs.unlinkSync(CHECKPOINT_PATH);
+  } catch {
+    // ignore
+  }
+}
+
 interface Args {
   batchSize: number;
   limit: number;
   dryRun: boolean;
   delayMs: number;
+  reset: boolean;
+  /** Hours to wait before re-touching a channel. Defaults to 24h, which lets us
+   * skip rows the previous run already processed even if their fields are still
+   * NULL (e.g. country that YouTube doesn't expose). Use 0 to force re-fetch. */
+  cooldownHours: number;
 }
 
 function parseArgs(): Args {
@@ -40,6 +88,8 @@ function parseArgs(): Args {
     limit: parseInt(get('--limit', '0'), 10), // 0 = no limit
     dryRun: argv.includes('--dry-run'),
     delayMs: parseInt(get('--delay-ms', '500'), 10),
+    reset: argv.includes('--reset'),
+    cooldownHours: parseInt(get('--cooldown-hours', '24'), 10),
   };
 }
 
@@ -70,15 +120,31 @@ async function main() {
   const args = parseArgs();
   console.log('[Backfill] Config:', args);
 
-  // Backfill walks the table monotonically by primary key. We remember the
-  // last id we touched and pass it as `afterId` to the next query, which
-  // guarantees every row is processed at most once per run regardless of
-  // whether all its enrichable fields could be filled (country/region often
-  // can't, since YouTube hides them).
-  let lastId: string | undefined = undefined;
+  if (args.reset) {
+    deleteCheckpoint();
+    console.log('[Backfill] Checkpoint reset.');
+  }
+
+  // Backfill walks the table monotonically by primary key. The afterId cursor
+  // is persisted to disk after every batch so PC sleep, crashes, or Ctrl+C
+  // resume cleanly without re-fetching channels we already processed.
+  const existing = readCheckpoint();
+  let lastId: string | undefined = existing?.lastId ?? undefined;
+  let processed = existing?.processed ?? 0;
+  let totalOk = existing?.totalOk ?? 0;
+  let totalFailed = existing?.totalFailed ?? 0;
+  if (existing) {
+    console.log(
+      `[Backfill] Resuming from checkpoint: lastId=${lastId} processed=${processed} ok=${totalOk} fail=${totalFailed}`,
+    );
+    console.log(`[Backfill] Started: ${existing.startedAt} | Last update: ${existing.updatedAt}`);
+  }
+  const startedAt = existing?.startedAt ?? new Date().toISOString();
+
+  const fetchOpts = { cooldownHours: args.cooldownHours };
 
   if (args.dryRun) {
-    const sample = await getChannelsNeedingEnrichment(args.batchSize, { cooldownDays: 0 });
+    const sample = await getChannelsNeedingEnrichment(args.batchSize, fetchOpts);
     console.log(`[Backfill] DRY RUN — would process up to ${args.limit || 'all'} starting with batch of ${sample.length}:`);
     for (const c of sample.slice(0, 5)) {
       console.log(`  ${c.id} | ${c.title} | lang=${c.language ?? 'NULL'} thumb=${c.thumbnail_url ? 'Y' : 'N'} last=${c.last_upload_date ?? 'NULL'}`);
@@ -94,9 +160,6 @@ async function main() {
   }
 
   const startTs = Date.now();
-  let processed = 0;
-  let totalOk = 0;
-  let totalFailed = 0;
 
   while (!stopping) {
     if (args.limit > 0 && processed >= args.limit) {
@@ -115,7 +178,7 @@ async function main() {
       : args.batchSize;
 
     const batch = await getChannelsNeedingEnrichment(target, {
-      cooldownDays: 0,
+      ...fetchOpts,
       afterId: lastId,
     });
     if (batch.length === 0) {
@@ -128,6 +191,16 @@ async function main() {
     processed += batch.length;
     totalOk += stats.enriched;
     totalFailed += stats.failed + stats.skipped;
+
+    // Persist checkpoint after every batch. Cheap (~few KB write).
+    writeCheckpoint({
+      lastId: lastId ?? null,
+      processed,
+      totalOk,
+      totalFailed,
+      startedAt,
+      updatedAt: new Date().toISOString(),
+    });
 
     const elapsed = (Date.now() - startTs) / 1000;
     const rate = processed / elapsed; // rows/sec
@@ -145,12 +218,19 @@ async function main() {
   }
 
   const elapsed = (Date.now() - startTs) / 1000;
+  const remaining = await getRemainingChannelsCount();
   console.log(`\n[Backfill] Run summary:`);
   console.log(`  processed:     ${processed}`);
   console.log(`  ok:            ${totalOk}`);
   console.log(`  failed/skip:   ${totalFailed}`);
   console.log(`  elapsed:       ${formatEta(elapsed)}`);
-  console.log(`  remaining DB:  ${await getRemainingChannelsCount()}`);
+  console.log(`  remaining DB:  ${remaining}`);
+  console.log(`  checkpoint:    ${CHECKPOINT_PATH}`);
+  if (remaining === 0 || (lastId && lastId.startsWith('UCzz'))) {
+    // Hit the end of the table — checkpoint is no longer useful.
+    deleteCheckpoint();
+    console.log(`[Backfill] Cleared checkpoint (run complete).`);
+  }
 }
 
 main().catch(err => {

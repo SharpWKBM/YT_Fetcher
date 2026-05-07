@@ -42,10 +42,11 @@ export interface NeedsEnrichmentOptions {
   /**
    * If set, skip channels that were touched within this many days. The cron
    * job uses 7 to avoid re-fetching the same channel every minute when YouTube
-   * doesn't expose certain fields. The bulk backfill passes `0` to enrich
-   * every row at least once regardless of when it was inserted.
+   * doesn't expose certain fields. Ignored when `cooldownHours` is also set.
    */
   cooldownDays?: number;
+  /** Finer-grained version of cooldownDays. Wins when both are set. */
+  cooldownHours?: number;
   /**
    * Only return rows with id > this. Used by the bulk backfill to walk the
    * table monotonically by primary key, so we never re-process the same row
@@ -69,9 +70,14 @@ export async function getChannelsNeedingEnrichment(
   const client = getClient();
   const where = ENRICHABLE_FIELDS.map(f => `${f} IS NULL OR ${f} = ''`).join(' OR ');
   const cooldownDays = opts.cooldownDays ?? 7;
-  const cooldownClause = cooldownDays > 0
-    ? ` AND (fetched_at IS NULL OR fetched_at < datetime('now', '-${cooldownDays} days'))`
-    : '';
+  const cooldownHours = opts.cooldownHours;
+  // Hours wins over days when both are set — gives finer-grained control for
+  // the bulk backfill which wants ~24h cooldowns instead of 7d.
+  const cooldownClause = cooldownHours != null && cooldownHours > 0
+    ? ` AND (fetched_at IS NULL OR fetched_at < datetime('now', '-${cooldownHours} hours'))`
+    : cooldownDays > 0
+      ? ` AND (fetched_at IS NULL OR fetched_at < datetime('now', '-${cooldownDays} days'))`
+      : '';
 
   const afterClause = opts.afterId ? ` AND id > ?` : '';
   // Always order by id so paginated walks are deterministic; non-paginated
