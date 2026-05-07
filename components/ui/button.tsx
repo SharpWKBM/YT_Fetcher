@@ -34,13 +34,31 @@ const buttonVariants = cva(
 export interface ButtonProps
   extends React.ButtonHTMLAttributes<HTMLButtonElement>,
     VariantProps<typeof buttonVariants> {
+  /**
+   * Render as the immediate child element (a, Link, etc.) instead of <button>,
+   * merging the button styles onto it. Mirrors shadcn/ui's Slot pattern but
+   * implemented inline via cloneElement to avoid pulling in @radix-ui/react-slot.
+   */
   asChild?: boolean;
 }
 
 export const Button = React.forwardRef<HTMLButtonElement, ButtonProps>(
-  ({ className, variant, size, ...props }, ref) => (
-    <button ref={ref} className={cn(buttonVariants({ variant, size, className }))} {...props} />
-  ),
+  ({ className, variant, size, asChild = false, children, ...props }, ref) => {
+    const finalClassName = cn(buttonVariants({ variant, size, className }));
+    if (asChild && React.isValidElement(children)) {
+      const childElement = children as React.ReactElement<{ className?: string }>;
+      return React.cloneElement(childElement, {
+        className: cn(finalClassName, childElement.props.className),
+        ...props,
+        ref,
+      } as never);
+    }
+    return (
+      <button ref={ref} className={finalClassName} {...props}>
+        {children}
+      </button>
+    );
+  },
 );
 Button.displayName = 'Button';
 

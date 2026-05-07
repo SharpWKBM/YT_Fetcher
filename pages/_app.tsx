@@ -1,6 +1,6 @@
 import '@/styles/globals.css';
 import type { AppProps } from 'next/app';
-import Head from 'next/head';
+import Script from 'next/script';
 import GoogleAnalytics from '@/components/Analytics/GoogleAnalytics';
 import { ThemeToggle } from '@/components/ThemeToggle/ThemeToggle';
 
@@ -24,9 +24,9 @@ const themeBootstrap = `
 export default function App({ Component, pageProps }: AppProps) {
   return (
     <>
-      <Head>
-        <script dangerouslySetInnerHTML={{ __html: themeBootstrap }} />
-      </Head>
+      <Script id="theme-bootstrap" strategy="beforeInteractive">
+        {themeBootstrap}
+      </Script>
       <GoogleAnalytics measurementId={process.env.NEXT_PUBLIC_GA_MEASUREMENT_ID || ''} />
       <ThemeToggle className="fixed right-4 top-4 z-50 bg-background/80 shadow-sm backdrop-blur" />
       <Component {...pageProps} />
