@@ -9,7 +9,7 @@
     },
     {
       "path": "/api/cron/enrich-channels",
-      "schedule": "*/10 * * * *"
+      "schedule": "0 2 * * *"
     }
   ],
   "env": {
