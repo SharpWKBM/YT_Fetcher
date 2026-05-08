@@ -28,43 +28,67 @@ export interface ChannelAboutDetails {
 }
 
 /**
- * Fetch the channel's /about tab — the only place Innertube reliably exposes
- * country, joined date, business links, and total view count.
+ * Fetch the channel's /about tab.
+ *
+ * As of late-2025 the data lives in `aboutChannelViewModel`, which is loaded
+ * lazily via an engagementPanel continuation when you call /youtubei/v1/browse
+ * with no params. The simple `params=EgVhYm91dPIGBAgEEAI%3D` call returns
+ * nothing for most channels.
+ *
+ * BUT — if you fetch the channel `/about` HTML page directly, the embedded
+ * `ytInitialData` already contains the populated viewModel under
+ * `onResponseReceivedEndpoints[*].showEngagementPanelEndpoint.engagementPanel...
+ * .aboutChannelRenderer.metadata.aboutChannelViewModel`. So we scrape that.
  */
 export async function fetchChannelAbout(channelId: string): Promise<ChannelAboutDetails> {
   if (!isChannelId(channelId)) {
     throw new NoApiError('invalid-id', `Not a UC channel id: ${channelId}`);
   }
 
-  const body = JSON.stringify({
-    context: {
-      client: { hl: 'en', gl: 'US', clientName: 'WEB', clientVersion: CLIENT_VERSION },
-    },
-    browseId: channelId,
-    params: ABOUT_TAB_PARAMS,
-  });
-
-  const res = await fetchWithRetry(ENDPOINT, {
-    method: 'POST',
-    body,
-    headers: { 'Content-Type': 'application/json' },
-  });
+  const url = `https://www.youtube.com/channel/${channelId}/about?hl=en&persist_hl=1`;
+  const res = await fetchWithRetry(url);
 
   if (res.status === 404) throw new NoApiError('not-found', `About 404 for ${channelId}`, 404);
   if (!res.ok) throw new NoApiError('http', `About HTTP ${res.status} for ${channelId}`, res.status);
 
-  const data = await res.json().catch(() => null);
-  if (!data) throw new NoApiError('parse', `About JSON parse failed for ${channelId}`);
+  const html = await res.text();
+  if (html.includes('consent.youtube.com') || html.includes('captcha-form')) {
+    throw new NoApiError('blocked', `Consent/captcha wall for ${channelId}`);
+  }
+
+  // Extract ytInitialData. Patterns ordered by frequency.
+  const patterns = [
+    /var ytInitialData = (\{.*?\});\s*<\/script>/s,
+    /window\["ytInitialData"\]\s*=\s*(\{.*?\});\s*<\/script>/s,
+    /ytInitialData\s*=\s*(\{.*?\});\s*<\/script>/s,
+  ];
+  let data: unknown = null;
+  for (const re of patterns) {
+    const m = html.match(re);
+    if (m) {
+      try {
+        data = JSON.parse(m[1]);
+        break;
+      } catch {
+        // try next
+      }
+    }
+  }
+  if (!data) throw new NoApiError('parse', `ytInitialData not found for ${channelId}`);
 
   return parseAboutPayload(data);
 }
 
 /**
- * The about tab has TWO shapes:
- *   - legacy: tabs[*].tabRenderer.content.sectionListRenderer.contents[*].itemSectionRenderer.contents[*].channelAboutFullMetadataRenderer
- *   - new:    onResponseReceivedEndpoints[*].appendContinuationItemsAction.continuationItems[*].aboutChannelRenderer.metadata.aboutChannelViewModel
+ * The about tab has multiple shapes across YouTube layouts:
+ *   - legacy:  channelAboutFullMetadataRenderer (rare in 2025)
+ *   - current: aboutChannelViewModel (raw text fields like `country: "India"`)
+ *   - either embedded in `ytInitialData.onResponseReceivedEndpoints` (HTML page)
+ *     or in the engagementPanels array (Innertube continuation)
  *
- * We probe both and merge.
+ * We probe both and merge. Country comes back as a localized name (e.g. "India",
+ * "United Kingdom") so we map it to ISO-2 for consistency with the rest of the
+ * `region` filter.
  *
  * Exported for testing.
  */
@@ -80,7 +104,7 @@ export function parseAboutPayload(data: any): ChannelAboutDetails {
       url: l?.navigationEndpoint?.urlEndpoint?.url ?? l?.endpoint?.urlEndpoint?.url ?? '',
     })).filter((l: any) => l.url);
     return {
-      country,
+      country: countryToIso2(country),
       joinedDate: joined ? toIsoDate(joined) : null,
       viewCount: parseCount(viewText),
       links,
@@ -88,34 +112,94 @@ export function parseAboutPayload(data: any): ChannelAboutDetails {
     };
   }
 
-  // --- New aboutChannelViewModel shape ---
+  // --- Current aboutChannelViewModel shape ---
   const about = findFirst(data, (n: any) => n?.aboutChannelViewModel)?.aboutChannelViewModel
     ?? findFirst(data, (n: any) => n?.aboutChannelRenderer)?.aboutChannelRenderer?.metadata?.aboutChannelViewModel;
 
   if (about) {
     const country = about?.country ?? null;
-    const joined = about?.joinedDateText?.content
-      ?? about?.joinedDateText?.parts?.map((p: any) => p?.text?.content ?? '').join('')
-      ?? null;
-    const viewText = about?.viewCountText?.content ?? null;
+    const joined = textOf(about?.joinedDateText);
+    const viewText = textOf(about?.viewCountText);
     const links: Array<{ title: string; url: string }> = (about?.links ?? []).map((wrapper: any) => {
       const link = wrapper?.channelExternalLinkViewModel ?? wrapper;
+      const url: string =
+        link?.link?.commandRuns?.[0]?.onTap?.innertubeCommand?.urlEndpoint?.url
+        ?? link?.link?.content
+        ?? '';
       return {
         title: link?.title?.content ?? '',
-        url: link?.link?.content ?? '',
+        url,
       };
     }).filter((l: any) => l.url);
     return {
-      country: typeof country === 'string' && country.length <= 3 ? country : null,
+      country: countryToIso2(country),
       joinedDate: joined ? toIsoDate(joined.replace(/^Joined\s+/i, '')) : null,
       viewCount: parseCount(viewText),
       links,
-      description: about?.description ?? null,
+      description: textOf(about?.description),
     };
   }
 
   return { country: null, joinedDate: null, viewCount: null, links: [], description: null };
 }
+
+/**
+ * Extract a string from any of YouTube's text shapes: a plain string, an
+ * object with `content`, an object with `simpleText`, or a `runs[]` array.
+ */
+function textOf(node: unknown): string | null {
+  if (node == null) return null;
+  if (typeof node === 'string') return node;
+  if (typeof node === 'object') {
+    const n = node as any;
+    if (typeof n.content === 'string') return n.content;
+    if (typeof n.simpleText === 'string') return n.simpleText;
+    if (Array.isArray(n.runs)) return n.runs.map((r: any) => r?.text ?? '').join('');
+    if (Array.isArray(n.parts)) return n.parts.map((p: any) => p?.text?.content ?? '').join('');
+  }
+  return null;
+}
+
+/**
+ * Map YouTube's localized country names ("India", "United Kingdom") to ISO-2
+ * codes ("IN", "GB"). Falls back to null for things we don't recognize so the
+ * region filter doesn't get polluted with arbitrary strings. The list covers
+ * the top ~80 countries we expect to see; everything else stays null.
+ */
+function countryToIso2(name: string | null | undefined): string | null {
+  if (!name || typeof name !== 'string') return null;
+  // Already an ISO-2 code (some shapes return it that way)
+  if (/^[A-Z]{2}$/.test(name)) return name;
+  const key = name.trim().toLowerCase();
+  return COUNTRY_NAME_TO_ISO2[key] ?? null;
+}
+
+/* eslint-disable prettier/prettier */
+const COUNTRY_NAME_TO_ISO2: Record<string, string> = {
+  'united states': 'US', 'usa': 'US', 'u.s.': 'US', 'united states of america': 'US',
+  'united kingdom': 'GB', 'uk': 'GB', 'great britain': 'GB', 'england': 'GB',
+  'india': 'IN', 'canada': 'CA', 'australia': 'AU', 'germany': 'DE', 'france': 'FR',
+  'japan': 'JP', 'south korea': 'KR', 'korea': 'KR', 'china': 'CN', 'hong kong': 'HK',
+  'taiwan': 'TW', 'singapore': 'SG', 'malaysia': 'MY', 'indonesia': 'ID', 'philippines': 'PH',
+  'thailand': 'TH', 'vietnam': 'VN', 'russia': 'RU', 'russian federation': 'RU',
+  'ukraine': 'UA', 'belarus': 'BY', 'kazakhstan': 'KZ', 'poland': 'PL', 'czech republic': 'CZ',
+  'czechia': 'CZ', 'slovakia': 'SK', 'hungary': 'HU', 'romania': 'RO', 'bulgaria': 'BG',
+  'greece': 'GR', 'turkey': 'TR', 'türkiye': 'TR', 'italy': 'IT', 'spain': 'ES', 'portugal': 'PT',
+  'netherlands': 'NL', 'belgium': 'BE', 'sweden': 'SE', 'norway': 'NO', 'denmark': 'DK',
+  'finland': 'FI', 'iceland': 'IS', 'ireland': 'IE', 'switzerland': 'CH', 'austria': 'AT',
+  'mexico': 'MX', 'brazil': 'BR', 'argentina': 'AR', 'chile': 'CL', 'colombia': 'CO',
+  'peru': 'PE', 'venezuela': 'VE', 'ecuador': 'EC', 'uruguay': 'UY', 'paraguay': 'PY',
+  'bolivia': 'BO', 'cuba': 'CU', 'dominican republic': 'DO', 'puerto rico': 'PR',
+  'south africa': 'ZA', 'nigeria': 'NG', 'kenya': 'KE', 'egypt': 'EG', 'morocco': 'MA',
+  'algeria': 'DZ', 'tunisia': 'TN', 'ghana': 'GH', 'ethiopia': 'ET', 'tanzania': 'TZ',
+  'uganda': 'UG', 'cameroon': 'CM', 'ivory coast': 'CI', 'cote d\u2019ivoire': 'CI',
+  'saudi arabia': 'SA', 'united arab emirates': 'AE', 'uae': 'AE', 'qatar': 'QA',
+  'kuwait': 'KW', 'bahrain': 'BH', 'oman': 'OM', 'jordan': 'JO', 'lebanon': 'LB',
+  'iran': 'IR', 'iraq': 'IQ', 'pakistan': 'PK', 'bangladesh': 'BD', 'sri lanka': 'LK',
+  'nepal': 'NP', 'afghanistan': 'AF', 'myanmar': 'MM', 'cambodia': 'KH', 'laos': 'LA',
+  'israel': 'IL', 'new zealand': 'NZ',
+};
+/* eslint-enable prettier/prettier */
 
 /** Walk an arbitrary JSON tree, return the first node where `pred` returns truthy. */
 function findFirst(root: any, pred: (n: any) => any, maxDepth: number = 12): any {

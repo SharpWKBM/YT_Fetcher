@@ -69,15 +69,19 @@ export async function getChannelsNeedingEnrichment(
 
   const client = getClient();
   const where = ENRICHABLE_FIELDS.map(f => `${f} IS NULL OR ${f} = ''`).join(' OR ');
-  const cooldownDays = opts.cooldownDays ?? 7;
-  const cooldownHours = opts.cooldownHours;
-  // Hours wins over days when both are set — gives finer-grained control for
-  // the bulk backfill which wants ~24h cooldowns instead of 7d.
-  const cooldownClause = cooldownHours != null && cooldownHours > 0
-    ? ` AND (fetched_at IS NULL OR fetched_at < datetime('now', '-${cooldownHours} hours'))`
-    : cooldownDays > 0
-      ? ` AND (fetched_at IS NULL OR fetched_at < datetime('now', '-${cooldownDays} days'))`
-      : '';
+  // cooldownHours wins over cooldownDays when explicitly set (even to 0).
+  // 0 means "ignore cooldown entirely — re-fetch every row".
+  let cooldownClause = '';
+  if (opts.cooldownHours != null) {
+    if (opts.cooldownHours > 0) {
+      cooldownClause = ` AND (fetched_at IS NULL OR fetched_at < datetime('now', '-${opts.cooldownHours} hours'))`;
+    }
+  } else {
+    const cooldownDays = opts.cooldownDays ?? 7;
+    if (cooldownDays > 0) {
+      cooldownClause = ` AND (fetched_at IS NULL OR fetched_at < datetime('now', '-${cooldownDays} days'))`;
+    }
+  }
 
   const afterClause = opts.afterId ? ` AND id > ?` : '';
   // Always order by id so paginated walks are deterministic; non-paginated
@@ -242,7 +246,7 @@ async function persistEnriched(
         title = COALESCE(NULLIF(?, ''), title),
         subscribers = CASE WHEN ? IS NOT NULL THEN ? ELSE subscribers END,
         language = COALESCE(language, ?),
-        region = COALESCE(region, ?),
+        region = CASE WHEN ? IS NOT NULL THEN ? ELSE region END,
         last_upload_date = COALESCE(last_upload_date, ?),
         thumbnail_url = COALESCE(NULLIF(thumbnail_url, ''), ?),
         social_links = COALESCE(NULLIF(social_links, ''), ?),
@@ -255,6 +259,10 @@ async function persistEnriched(
       data.subscribers,
       data.subscribers,
       detectedLang,
+      // Region: overwrite when about-tab returns an ISO-2 country. The pre-fix
+      // code wrote literal 'CIS'/'RU' fallbacks for non-Russian channels; we
+      // want those stale values replaced with the real country.
+      data.country,
       data.country,
       data.lastUploadDate,
       data.avatarUrl,
