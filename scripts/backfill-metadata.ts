@@ -160,6 +160,7 @@ async function main() {
   }
 
   const startTs = Date.now();
+  const initialProcessed = processed; // for accurate rate calc when resuming
 
   while (!stopping) {
     if (args.limit > 0 && processed >= args.limit) {
@@ -203,7 +204,9 @@ async function main() {
     });
 
     const elapsed = (Date.now() - startTs) / 1000;
-    const rate = processed / elapsed; // rows/sec
+    // Rate is for the current run only — checkpoint resumes shouldn't credit
+    // their pre-existing `processed` count to elapsed wall time.
+    const rate = (processed - initialProcessed) / elapsed;
     const stillRemaining = await getRemainingChannelsCount();
     const eta = rate > 0 ? stillRemaining / rate : Infinity;
 

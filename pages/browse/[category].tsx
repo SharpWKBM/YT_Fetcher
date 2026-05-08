@@ -1,10 +1,15 @@
 import { GetServerSideProps } from 'next';
 import Link from 'next/link';
+import { useRouter } from 'next/router';
+import { ArrowLeft } from 'lucide-react';
 import Meta from '@/components/SEO/Meta';
 import Breadcrumbs from '@/components/Breadcrumbs/Breadcrumbs';
-import styles from '@/styles/Home.module.css';
+import ChannelCard from '@/components/ChannelCard/ChannelCard';
+import { Card, CardContent } from '@/components/ui/card';
+import { Button } from '@/components/ui/button';
+import { Badge } from '@/components/ui/badge';
+import { formatCount } from '@/lib/utils';
 import { getChannels } from '@/lib/db';
-import { useState } from 'react';
 
 interface Channel {
   id: string;
@@ -13,11 +18,15 @@ interface Channel {
   language: string | null;
   region: string | null;
   last_upload_date: string | null;
+  channel_url: string;
   thumbnail_url: string | null;
   monthsInactive: number | null;
+  social_links?: string | null;
+  niche?: string | null;
+  video_count?: number | null;
 }
 
-interface BrowseCategoryProps {
+interface Props {
   category: string;
   channels: Channel[];
   total: number;
@@ -25,186 +34,202 @@ interface BrowseCategoryProps {
   totalPages: number;
 }
 
-const CATEGORIES = {
-  'inactive-3-6': { title: 'Inactive 3-6 Months', inactiveMonths: 3, maxInactive: 6 },
-  'inactive-6-12': { title: 'Inactive 6-12 Months', inactiveMonths: 6, maxInactive: 12 },
-  'inactive-12plus': { title: 'Inactive 12+ Months', inactiveMonths: 12, maxInactive: 999 },
-  'small': { title: 'Small Channels (10K-50K)', minSubs: 10000, maxSubs: 50000 },
-  'medium': { title: 'Medium Channels (50K-500K)', minSubs: 50000, maxSubs: 500000 },
-  'large': { title: 'Large Channels (500K-5M)', minSubs: 500000, maxSubs: 5000000 },
+interface CategoryInfo {
+  title: string;
+  description: string;
+  inactiveMonths?: number;
+  maxInactive?: number;
+  minSubs?: number;
+  maxSubs?: number;
+}
+
+const CATEGORIES: Record<string, CategoryInfo> = {
+  'inactive-3-6': {
+    title: 'Inactive 3–6 months',
+    description: 'Channels that have stalled but might still be revived.',
+    inactiveMonths: 3,
+    maxInactive: 6,
+  },
+  'inactive-6-12': {
+    title: 'Inactive 6–12 months',
+    description: 'Likely dormant — strong acquisition candidates.',
+    inactiveMonths: 6,
+    maxInactive: 12,
+  },
+  'inactive-12plus': {
+    title: 'Inactive 12+ months',
+    description: 'Long-dormant channels often available below market.',
+    inactiveMonths: 12,
+    maxInactive: 999,
+  },
+  small: {
+    title: 'Small (10K–50K)',
+    description: 'Right-sized for first-time acquirers.',
+    minSubs: 10_000,
+    maxSubs: 50_000,
+  },
+  medium: {
+    title: 'Medium (50K–500K)',
+    description: 'Established audience without enterprise pricing.',
+    minSubs: 50_000,
+    maxSubs: 500_000,
+  },
+  large: {
+    title: 'Large (500K–5M)',
+    description: 'Premium channels with significant reach.',
+    minSubs: 500_000,
+    maxSubs: 5_000_000,
+  },
 };
 
-export default function BrowseCategory({ category, channels, total, page, totalPages }: BrowseCategoryProps) {
-  const categoryInfo = CATEGORIES[category as keyof typeof CATEGORIES];
+export default function BrowseCategory({ category, channels, total, page, totalPages }: Props) {
+  const info = CATEGORIES[category];
+  const router = useRouter();
 
-  if (!categoryInfo) {
+  if (!info) {
     return (
       <>
-        <Meta
-          title="Category Not Found - YouTube Channel Finder"
-          description="The requested category could not be found."
-          noindex={true}
-        />
-        <main className={styles.container}>
-          <div className={styles.error}>Category not found</div>
-          <Link href="/" className={styles.backLink}>
-            ← Back to Search
-          </Link>
+        <Meta title="Category not found" description="Category not found" noindex />
+        <main className="container py-12">
+          <Card>
+            <CardContent className="space-y-4 py-12 text-center">
+              <p className="text-base font-medium">Category not found</p>
+              <Button asChild variant="outline">
+                <Link href="/">
+                  <ArrowLeft className="mr-2 h-4 w-4" /> Back to search
+                </Link>
+              </Button>
+            </CardContent>
+          </Card>
         </main>
       </>
     );
   }
 
-  const formatSubscribers = (subs: number) => {
-    if (subs >= 1000000) return `${(subs / 1000000).toFixed(1)}M`;
-    if (subs >= 1000) return `${(subs / 1000).toFixed(1)}K`;
-    return subs.toString();
-  };
-
-  const formatDate = (dateString: string | null) => {
-    if (!dateString) return 'Unknown';
-    return new Date(dateString).toLocaleDateString('en-US', {
-      year: 'numeric',
-      month: 'short',
-      day: 'numeric',
-    });
-  };
-
   const schema = {
     '@context': 'https://schema.org',
     '@type': 'CollectionPage',
-    name: `${categoryInfo.title} - YouTube Channels`,
-    description: `Browse ${total} YouTube channels in the ${categoryInfo.title} category`,
+    name: `${info.title} – YouTube channels`,
+    description: `Browse ${total} YouTube channels in the ${info.title} category`,
     numberOfItems: total,
   };
+
+  function goPage(p: number) {
+    void router.push({ pathname: router.pathname, query: { ...router.query, page: p } });
+  }
 
   return (
     <>
       <Meta
-        title={`${categoryInfo.title} - Browse YouTube Channels`}
-        description={`Discover ${total} YouTube channels in the ${categoryInfo.title} category. Find inactive channels ready for acquisition or collaboration.`}
+        title={`${info.title} – Browse channels | YouTube Channel Finder`}
+        description={`Discover ${total} YouTube channels matching: ${info.title}. ${info.description}`}
         schema={schema}
       />
 
-      <main className={styles.container}>
-        <Breadcrumbs
-          items={[
-            { label: 'Home', href: '/' },
-            { label: 'Browse', href: '/' },
-            { label: categoryInfo.title, href: `/browse/${category}` },
-          ]}
-        />
+      <div className="min-h-screen bg-background text-foreground">
+        <main className="container py-8 sm:py-12">
+          <Breadcrumbs
+            items={[
+              { label: 'Home', href: '/' },
+              { label: 'Browse', href: '/' },
+              { label: info.title, href: `/browse/${category}` },
+            ]}
+          />
 
-        <div className={styles.header}>
-          <div>
-            <Link href="/" className={styles.backLink}>
-              ← Back to Search
-            </Link>
-            <h1>{categoryInfo.title}</h1>
-            <p className={styles.description}>
-              Showing {channels.length} of {total} channels
-            </p>
+          <div className="my-6">
+            <Button asChild variant="ghost" size="sm">
+              <Link href="/">
+                <ArrowLeft className="mr-2 h-4 w-4" /> Back to search
+              </Link>
+            </Button>
           </div>
-        </div>
 
-        <div className={styles.channelGrid}>
-          {channels.map((channel) => (
-            <Link
-              key={channel.id}
-              href={`/channels/${channel.id}`}
-              className={styles.relatedCard}
-            >
-              {channel.thumbnail_url && (
-                <img
-                  src={channel.thumbnail_url}
-                  alt={channel.title}
-                  className={styles.relatedThumbnail}
-                />
-              )}
-              <div className={styles.relatedTitle}>{channel.title}</div>
-              <div className={styles.relatedStats}>
-                {formatSubscribers(channel.subscribers)} subscribers
-                {channel.language && ` • ${channel.language}`}
-              </div>
-              {channel.monthsInactive && channel.monthsInactive >= 6 && (
-                <div className={styles.relatedStats}>
-                  Last upload: {formatDate(channel.last_upload_date)}
-                </div>
-              )}
-            </Link>
-          ))}
-        </div>
+          <header className="mb-8 space-y-3">
+            <Badge variant="secondary">{formatCount(total)} matches</Badge>
+            <h1 className="text-3xl font-bold tracking-tight sm:text-4xl">{info.title}</h1>
+            <p className="text-muted-foreground">{info.description}</p>
+          </header>
 
-        {totalPages > 1 && (
-          <div className={styles.pagination}>
-            <button
-              disabled={page === 1}
-              onClick={() => window.location.href = `?page=${page - 1}`}
-            >
-              Previous
-            </button>
-            <span>
-              Page {page} of {totalPages}
-            </span>
-            <button
-              disabled={page === totalPages}
-              onClick={() => window.location.href = `?page=${page + 1}`}
-            >
-              Next
-            </button>
-          </div>
-        )}
-      </main>
+          {channels.length === 0 ? (
+            <Card>
+              <CardContent className="py-12 text-center">
+                <p className="text-base font-medium">No channels in this category yet.</p>
+                <p className="mt-1 text-sm text-muted-foreground">
+                  Backfill is still running — check back soon, or browse other categories.
+                </p>
+                <Button asChild variant="outline" className="mt-4">
+                  <Link href="/">Back to all channels</Link>
+                </Button>
+              </CardContent>
+            </Card>
+          ) : (
+            <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
+              {channels.map((channel, index) => (
+                <ChannelCard key={channel.id} channel={channel} index={index} />
+              ))}
+            </div>
+          )}
+
+          {totalPages > 1 && (
+            <nav aria-label="Pagination" className="mt-8 flex items-center justify-center gap-3">
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => goPage(Math.max(1, page - 1))}
+                disabled={page === 1}
+              >
+                Previous
+              </Button>
+              <span className="text-sm text-muted-foreground">
+                Page <span className="font-semibold text-foreground">{page}</span> of{' '}
+                <span className="font-semibold text-foreground">{totalPages}</span>
+              </span>
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => goPage(Math.min(totalPages, page + 1))}
+                disabled={page === totalPages}
+              >
+                Next
+              </Button>
+            </nav>
+          )}
+        </main>
+      </div>
     </>
   );
 }
 
-export const getServerSideProps: GetServerSideProps = async (context) => {
+export const getServerSideProps: GetServerSideProps<Props> = async context => {
   const { category } = context.params as { category: string };
   const page = parseInt(context.query.page as string) || 1;
   const limit = 24;
 
-  const categoryInfo = CATEGORIES[category as keyof typeof CATEGORIES];
-
+  const categoryInfo = CATEGORIES[category];
   if (!categoryInfo) {
-    return {
-      props: {
-        category,
-        channels: [],
-        total: 0,
-        page: 1,
-        totalPages: 0,
-      },
-    };
+    return { props: { category, channels: [], total: 0, page: 1, totalPages: 0 } };
   }
 
   try {
-    const filters: any = {
+    const filters: Parameters<typeof getChannels>[0] = {
       page,
       limit,
-      sortBy: 'subscribers' as const,
-      order: 'DESC' as const,
+      sortBy: 'subscribers',
+      order: 'DESC',
     };
-
-    if ('inactiveMonths' in categoryInfo) {
-      filters.inactiveMonths = categoryInfo.inactiveMonths;
-    }
-
-    if ('minSubs' in categoryInfo) {
-      filters.minSubs = categoryInfo.minSubs;
-      filters.maxSubs = categoryInfo.maxSubs;
-    }
+    if (categoryInfo.inactiveMonths != null) filters.inactiveMonths = categoryInfo.inactiveMonths;
+    if (categoryInfo.minSubs != null) filters.minSubs = categoryInfo.minSubs;
+    if (categoryInfo.maxSubs != null) filters.maxSubs = categoryInfo.maxSubs;
 
     const result = await getChannels(filters);
 
-    const channelsWithInactivity = result.channels.map((channel) => {
-      let monthsInactive = null;
+    const channels = result.channels.map(channel => {
+      let monthsInactive: number | null = null;
       if (channel.last_upload_date) {
-        const lastUpload = new Date(channel.last_upload_date);
+        const d = new Date(channel.last_upload_date);
         const now = new Date();
-        const diffMonths =
-          (now.getFullYear() - lastUpload.getFullYear()) * 12 + (now.getMonth() - lastUpload.getMonth());
-        monthsInactive = diffMonths;
+        monthsInactive =
+          (now.getFullYear() - d.getFullYear()) * 12 + (now.getMonth() - d.getMonth());
       }
       return { ...channel, monthsInactive };
     });
@@ -212,7 +237,7 @@ export const getServerSideProps: GetServerSideProps = async (context) => {
     return {
       props: {
         category,
-        channels: channelsWithInactivity,
+        channels,
         total: result.total,
         page: result.page,
         totalPages: Math.ceil(result.total / result.limit),
@@ -220,14 +245,6 @@ export const getServerSideProps: GetServerSideProps = async (context) => {
     };
   } catch (error) {
     console.error('Error fetching channels:', error);
-    return {
-      props: {
-        category,
-        channels: [],
-        total: 0,
-        page: 1,
-        totalPages: 0,
-      },
-    };
+    return { props: { category, channels: [], total: 0, page: 1, totalPages: 0 } };
   }
 };
