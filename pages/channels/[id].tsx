@@ -1,10 +1,26 @@
 import { GetServerSideProps } from 'next';
 import Link from 'next/link';
+import {
+  ArrowLeft,
+  ExternalLink,
+  Users,
+  Globe,
+  MapPin,
+  Calendar,
+  Video,
+  Clock,
+  PlayCircle,
+} from 'lucide-react';
 import Meta from '@/components/SEO/Meta';
 import Breadcrumbs from '@/components/Breadcrumbs/Breadcrumbs';
-import styles from '@/styles/ChannelProfile.module.css';
+import { Card, CardContent } from '@/components/ui/card';
+import { Button } from '@/components/ui/button';
+import { Badge } from '@/components/ui/badge';
+import { Avatar } from '@/components/ui/avatar';
+import { cn, formatCount, formatRelative } from '@/lib/utils';
 import { getChannelById, getRelatedChannels } from '@/lib/db';
-import { useState } from 'react';
+import { fetchChannelRss } from '@/lib/youtube/no-api/rss';
+import { isChannelId } from '@/lib/youtube/no-api/http';
 
 interface Channel {
   id: string;
@@ -16,60 +32,51 @@ interface Channel {
   channel_url: string;
   thumbnail_url: string | null;
   monthsInactive: number | null;
+  social_links?: string | null;
+  niche?: string | null;
+  video_count?: number | null;
 }
 
-interface ChannelProfileProps {
-  channel: Channel;
+interface RecentVideo {
+  videoId: string;
+  title: string;
+  publishedAt: string;
+}
+
+interface Props {
+  channel: Channel | null;
   relatedChannels: Channel[];
+  recentVideos: RecentVideo[];
   error?: string;
 }
 
-export default function ChannelProfile({ channel, relatedChannels, error }: ChannelProfileProps) {
-
-  if (error) {
+export default function ChannelProfile({ channel, relatedChannels, recentVideos, error }: Props) {
+  if (error || !channel) {
     return (
       <>
         <Meta
           title="Channel Not Found - YouTube Channel Finder"
           description="The requested channel could not be found."
-          noindex={true}
+          noindex
         />
-        <main className={styles.container}>
-          <div className={styles.error}>{error}</div>
-          <Link href="/" className={styles.backLink}>
-            ← Back to Search
-          </Link>
+        <main className="container py-12">
+          <Card>
+            <CardContent className="space-y-4 py-12 text-center">
+              <p className="text-base font-medium">{error ?? 'Channel not found'}</p>
+              <Button asChild variant="outline">
+                <Link href="/">
+                  <ArrowLeft className="mr-2 h-4 w-4" /> Back to search
+                </Link>
+              </Button>
+            </CardContent>
+          </Card>
         </main>
       </>
     );
   }
 
-  const channelUrl = channel.channel_url;
-  const formatSubscribers = (subs: number) => {
-    if (subs >= 1000000) return `${(subs / 1000000).toFixed(1)}M`;
-    if (subs >= 1000) return `${(subs / 1000).toFixed(1)}K`;
-    return subs.toString();
-  };
-
-  const formatDate = (dateString: string | null) => {
-    if (!dateString) return 'Unknown';
-    return new Date(dateString).toLocaleDateString('en-US', {
-      year: 'numeric',
-      month: 'long',
-      day: 'numeric',
-    });
-  };
-
-  const getInactivityBadge = (months: number | null) => {
-    if (!months) return null;
-    if (months >= 12) {
-      return <span className={`${styles.inactiveBadge} ${styles.danger}`}>Inactive {months}+ months</span>;
-    }
-    if (months >= 6) {
-      return <span className={`${styles.inactiveBadge} ${styles.warning}`}>Inactive {months} months</span>;
-    }
-    return null;
-  };
+  const inactivityBadge = renderInactivityBadge(channel.monthsInactive);
+  const socialLinks = parseSocialLinks(channel.social_links);
 
   const schema = {
     '@context': 'https://schema.org',
@@ -77,177 +84,327 @@ export default function ChannelProfile({ channel, relatedChannels, error }: Chan
     mainEntity: {
       '@type': 'Organization',
       name: channel.title,
-      url: channelUrl,
+      url: channel.channel_url,
       logo: channel.thumbnail_url,
-      sameAs: [channelUrl],
-      description: `YouTube channel with ${formatSubscribers(channel.subscribers)} subscribers. ${
-        channel.language ? `Language: ${channel.language}.` : ''
-      } ${channel.region ? `Region: ${channel.region}.` : ''}`,
+      sameAs: [channel.channel_url],
+      description: `YouTube channel with ${formatCount(channel.subscribers)} subscribers.`,
     },
   };
 
   return (
     <>
       <Meta
-        title={`${channel.title} - YouTube Channel Profile | ${formatSubscribers(channel.subscribers)} Subscribers`}
-        description={`Explore ${channel.title}, a YouTube channel with ${formatSubscribers(
-          channel.subscribers
-        )} subscribers. ${channel.language ? `Language: ${channel.language}.` : ''} ${
-          channel.monthsInactive
-            ? `Inactive for ${channel.monthsInactive} months.`
-            : 'Last upload: ' + formatDate(channel.last_upload_date)
-        }`}
+        title={`${channel.title} – ${formatCount(channel.subscribers)} subs | YouTube Channel Finder`}
+        description={`Profile for ${channel.title} (${formatCount(
+          channel.subscribers,
+        )} subscribers). Last upload: ${channel.last_upload_date ?? 'unknown'}.`}
         image={channel.thumbnail_url || undefined}
         type="profile"
         schema={schema}
       />
 
-      <main className={styles.container}>
-        <Breadcrumbs
-          items={[
-            { label: 'Home', href: '/' },
-            { label: 'Channels', href: '/' },
-            { label: channel.title, href: `/channels/${channel.id}` },
-          ]}
-        />
+      <div className="min-h-screen bg-background text-foreground">
+        <main className="container py-8 sm:py-12">
+          <Breadcrumbs
+            items={[
+              { label: 'Home', href: '/' },
+              { label: 'Channels', href: '/' },
+              { label: channel.title, href: `/channels/${channel.id}` },
+            ]}
+          />
 
-        <div className={styles.header}>
-          <Link href="/" className={styles.backLink}>
-            ← Back to Search
-          </Link>
-        </div>
-
-        <div className={styles.profileCard}>
-          <div className={styles.profileHeader}>
-            {channel.thumbnail_url && (
-              <img src={channel.thumbnail_url} alt={channel.title} className={styles.thumbnail} />
-            )}
-            <div className={styles.profileInfo}>
-              <h1 className={styles.channelTitle}>{channel.title}</h1>
-              <a href={channelUrl} target="_blank" rel="noopener noreferrer" className={styles.channelUrl}>
-                View on YouTube →
-              </a>
-            </div>
+          <div className="my-6">
+            <Button asChild variant="ghost" size="sm">
+              <Link href="/">
+                <ArrowLeft className="mr-2 h-4 w-4" /> Back to search
+              </Link>
+            </Button>
           </div>
 
-          <div className={styles.statsGrid}>
-            <div className={styles.statCard}>
-              <div className={styles.statLabel}>Subscribers</div>
-              <div className={styles.statValue}>{formatSubscribers(channel.subscribers)}</div>
-            </div>
+          {/* Hero card --------------------------------------------------- */}
+          <Card className="overflow-hidden">
+            {/* Banner placeholder gradient — channel banner is not in DB yet */}
+            <div className="h-32 bg-gradient-to-br from-primary/30 via-primary/10 to-transparent sm:h-40" />
 
-            {channel.language && (
-              <div className={styles.statCard}>
-                <div className={styles.statLabel}>Language</div>
-                <div className={styles.statValue}>{channel.language}</div>
-              </div>
-            )}
-
-            {channel.region && (
-              <div className={styles.statCard}>
-                <div className={styles.statLabel}>Region</div>
-                <div className={styles.statValue}>{channel.region}</div>
-              </div>
-            )}
-
-            <div className={styles.statCard}>
-              <div className={styles.statLabel}>Last Upload</div>
-              <div className={styles.statValue}>{formatDate(channel.last_upload_date)}</div>
-              {getInactivityBadge(channel.monthsInactive)}
-            </div>
-          </div>
-        </div>
-
-        {relatedChannels.length > 0 && (
-          <div className={styles.relatedSection}>
-            <h2>Similar Channels</h2>
-            <div className={styles.relatedGrid}>
-              {relatedChannels.map((related) => (
-                <Link
-                  key={related.id}
-                  href={`/channels/${related.id}`}
-                  className={styles.relatedCard}
-                >
-                  {related.thumbnail_url && (
-                    <img
-                      src={related.thumbnail_url}
-                      alt={related.title}
-                      className={styles.relatedThumbnail}
-                    />
-                  )}
-                  <div className={styles.relatedTitle}>{related.title}</div>
-                  <div className={styles.relatedStats}>
-                    {formatSubscribers(related.subscribers)} subscribers
-                    {related.language && ` • ${related.language}`}
+            <CardContent className="relative -mt-12 space-y-6 p-6 sm:-mt-16 sm:p-8">
+              <div className="flex flex-col gap-4 sm:flex-row sm:items-end">
+                <Avatar
+                  src={channel.thumbnail_url}
+                  alt={channel.title}
+                  fallback={channel.title}
+                  className="h-24 w-24 ring-4 ring-background sm:h-32 sm:w-32"
+                />
+                <div className="flex-1 space-y-2">
+                  <h1 className="text-2xl font-bold tracking-tight sm:text-3xl">{channel.title}</h1>
+                  <div className="flex flex-wrap items-center gap-2">
+                    {channel.niche && <Badge variant="default">{channel.niche}</Badge>}
+                    {channel.language && (
+                      <Badge variant="outline" className="gap-1">
+                        <Globe className="h-3 w-3" />
+                        {channel.language.toUpperCase()}
+                      </Badge>
+                    )}
+                    {channel.region && (
+                      <Badge variant="outline" className="gap-1">
+                        <MapPin className="h-3 w-3" />
+                        {channel.region}
+                      </Badge>
+                    )}
+                    {inactivityBadge}
                   </div>
-                </Link>
-              ))}
-            </div>
-          </div>
-        )}
-      </main>
+                </div>
+                <Button asChild size="lg" className="sm:self-end">
+                  <a href={channel.channel_url} target="_blank" rel="noopener noreferrer">
+                    Open on YouTube
+                    <ExternalLink className="ml-2 h-4 w-4" />
+                  </a>
+                </Button>
+              </div>
+
+              {/* Stats grid */}
+              <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
+                <StatTile icon={Users} label="Subscribers" value={formatCount(channel.subscribers)} />
+                <StatTile
+                  icon={Video}
+                  label="Videos"
+                  value={channel.video_count != null ? formatCount(channel.video_count) : '—'}
+                />
+                <StatTile
+                  icon={Calendar}
+                  label="Last upload"
+                  value={formatRelative(channel.last_upload_date)}
+                />
+                <StatTile
+                  icon={Clock}
+                  label="Inactive for"
+                  value={
+                    channel.monthsInactive != null
+                      ? `${channel.monthsInactive} mo`
+                      : '—'
+                  }
+                />
+              </div>
+
+              {socialLinks.length > 0 && (
+                <div className="flex flex-wrap gap-2 border-t border-border/60 pt-4">
+                  <span className="text-sm font-medium text-muted-foreground">Links:</span>
+                  {socialLinks.map(l => (
+                    <a
+                      key={l.url}
+                      href={l.url}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="text-sm text-primary hover:underline"
+                    >
+                      {l.label}
+                    </a>
+                  ))}
+                </div>
+              )}
+            </CardContent>
+          </Card>
+
+          {/* Recent videos ----------------------------------------------- */}
+          {recentVideos.length > 0 && (
+            <section className="mt-10">
+              <h2 className="mb-4 text-xl font-semibold tracking-tight">Recent uploads</h2>
+              <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
+                {recentVideos.slice(0, 9).map(v => (
+                  <a
+                    key={v.videoId}
+                    href={`https://www.youtube.com/watch?v=${v.videoId}`}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="group"
+                  >
+                    <Card className="overflow-hidden transition hover:border-primary/40 hover:shadow-md">
+                      <div className="relative aspect-video w-full bg-muted">
+                        {/* eslint-disable-next-line @next/next/no-img-element */}
+                        <img
+                          src={`https://i.ytimg.com/vi/${v.videoId}/mqdefault.jpg`}
+                          alt={v.title}
+                          loading="lazy"
+                          className="h-full w-full object-cover"
+                        />
+                        <div className="absolute inset-0 grid place-items-center bg-black/0 transition group-hover:bg-black/30">
+                          <PlayCircle className="h-12 w-12 text-white opacity-0 transition group-hover:opacity-100" />
+                        </div>
+                      </div>
+                      <CardContent className="space-y-1 p-3">
+                        <p className="line-clamp-2 text-sm font-medium leading-snug">{v.title}</p>
+                        <p className="text-xs text-muted-foreground">
+                          {formatRelative(v.publishedAt)}
+                        </p>
+                      </CardContent>
+                    </Card>
+                  </a>
+                ))}
+              </div>
+            </section>
+          )}
+
+          {/* Related ----------------------------------------------------- */}
+          {relatedChannels.length > 0 && (
+            <section className="mt-10">
+              <h2 className="mb-4 text-xl font-semibold tracking-tight">Similar channels</h2>
+              <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
+                {relatedChannels.map(r => (
+                  <Link key={r.id} href={`/channels/${r.id}`}>
+                    <Card className="h-full transition hover:border-primary/40 hover:shadow-md">
+                      <CardContent className="flex items-center gap-3 p-4">
+                        <Avatar
+                          src={r.thumbnail_url}
+                          alt={r.title}
+                          fallback={r.title}
+                          className="h-12 w-12"
+                        />
+                        <div className="min-w-0 flex-1">
+                          <div className="truncate text-sm font-semibold">{r.title}</div>
+                          <div className="text-xs text-muted-foreground">
+                            {formatCount(r.subscribers)} subs
+                            {r.language && ` · ${r.language.toUpperCase()}`}
+                          </div>
+                        </div>
+                      </CardContent>
+                    </Card>
+                  </Link>
+                ))}
+              </div>
+            </section>
+          )}
+        </main>
+      </div>
     </>
   );
 }
 
-export const getServerSideProps: GetServerSideProps = async (context) => {
+function StatTile({
+  icon: Icon,
+  label,
+  value,
+}: {
+  icon: React.ComponentType<{ className?: string }>;
+  label: string;
+  value: string;
+}) {
+  return (
+    <div className="rounded-lg border border-border/60 bg-card p-4">
+      <div className="flex items-center gap-2 text-xs uppercase tracking-wider text-muted-foreground">
+        <Icon className="h-3.5 w-3.5" />
+        {label}
+      </div>
+      <div className="mt-1 text-xl font-semibold">{value}</div>
+    </div>
+  );
+}
+
+function renderInactivityBadge(months: number | null | undefined) {
+  if (months == null) return null;
+  if (months >= 12) {
+    return <Badge variant="destructive">Inactive {months}+ months</Badge>;
+  }
+  if (months >= 6) {
+    return (
+      <Badge
+        variant="default"
+        className={cn('bg-amber-500 text-white hover:bg-amber-500/90 dark:bg-amber-700')}
+      >
+        Inactive {months} months
+      </Badge>
+    );
+  }
+  return null;
+}
+
+interface ParsedSocial {
+  label: string;
+  url: string;
+}
+
+function parseSocialLinks(raw: string | null | undefined): ParsedSocial[] {
+  if (!raw) return [];
+  try {
+    const arr = JSON.parse(raw);
+    if (!Array.isArray(arr)) return [];
+    return arr
+      .map((url: unknown): ParsedSocial | null => {
+        if (typeof url !== 'string') return null;
+        try {
+          const u = new URL(url.startsWith('http') ? url : `https://${url}`);
+          const host = u.hostname.replace(/^www\./, '');
+          return { label: host.split('.')[0], url: u.toString() };
+        } catch {
+          return null;
+        }
+      })
+      .filter((x): x is ParsedSocial => x !== null);
+  } catch {
+    return [];
+  }
+}
+
+export const getServerSideProps: GetServerSideProps<Props> = async context => {
   const { id } = context.params as { id: string };
 
   try {
     const channel = await getChannelById(id);
-
     if (!channel) {
       return {
         props: {
           channel: null,
           relatedChannels: [],
+          recentVideos: [],
           error: 'Channel not found',
         },
       };
     }
 
     // Calculate months inactive
-    let monthsInactive = null;
+    let monthsInactive: number | null = null;
     if (channel.last_upload_date) {
       const lastUpload = new Date(channel.last_upload_date);
       const now = new Date();
-      const diffMonths =
-        (now.getFullYear() - lastUpload.getFullYear()) * 12 + (now.getMonth() - lastUpload.getMonth());
-      monthsInactive = diffMonths;
+      monthsInactive =
+        (now.getFullYear() - lastUpload.getFullYear()) * 12 +
+        (now.getMonth() - lastUpload.getMonth());
     }
 
-    // Get related channels (same language/region, similar subscriber count)
-    const relatedChannels = await getRelatedChannels(channel.id, {
-      language: channel.language,
-      region: channel.region,
-      subscriberRange: [channel.subscribers * 0.5, channel.subscribers * 2],
-      limit: 6,
-    });
+    // Fetch recent videos via RSS in parallel with related channels.
+    // Both are best-effort — if either fails, we still render the page.
+    const [related, rss] = await Promise.all([
+      getRelatedChannels(channel.id, {
+        language: channel.language,
+        region: channel.region,
+        subscriberRange: [channel.subscribers * 0.5, channel.subscribers * 2],
+        limit: 6,
+      }),
+      isChannelId(channel.id) ? fetchChannelRss(channel.id).catch(() => null) : Promise.resolve(null),
+    ]);
 
-    const relatedWithInactivity = relatedChannels.map((related) => {
-      let relatedMonthsInactive = null;
-      if (related.last_upload_date) {
-        const lastUpload = new Date(related.last_upload_date);
+    const relatedWithInactivity = related.map(r => {
+      let mi: number | null = null;
+      if (r.last_upload_date) {
+        const d = new Date(r.last_upload_date);
         const now = new Date();
-        const diffMonths =
-          (now.getFullYear() - lastUpload.getFullYear()) * 12 + (now.getMonth() - lastUpload.getMonth());
-        relatedMonthsInactive = diffMonths;
+        mi = (now.getFullYear() - d.getFullYear()) * 12 + (now.getMonth() - d.getMonth());
       }
-      return { ...related, monthsInactive: relatedMonthsInactive };
+      return { ...r, monthsInactive: mi };
     });
 
     return {
       props: {
         channel: { ...channel, monthsInactive },
         relatedChannels: relatedWithInactivity,
+        recentVideos: rss?.recentVideos.slice(0, 9) ?? [],
       },
     };
-  } catch (error) {
-    console.error('Error fetching channel:', error);
+  } catch (err) {
+    console.error('Error fetching channel:', err);
     return {
       props: {
         channel: null,
         relatedChannels: [],
+        recentVideos: [],
         error: 'Failed to load channel',
       },
     };

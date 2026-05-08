@@ -51,7 +51,8 @@ describe('YouTube Scraper', () => {
       const channelId = 'UCX6OQ3DkcsbYNE6H8uQQuVA'; // MrBeast
       const details = await scrapeChannelDetails(channelId);
 
-      expect(details).toBeDefined();
+      expect(details).not.toBeNull();
+      if (!details) return;
       expect(details.subscribers).toBeGreaterThan(0);
       expect(typeof details.subscribers).toBe('number');
     });
@@ -60,6 +61,8 @@ describe('YouTube Scraper', () => {
       const channelId = 'UCX6OQ3DkcsbYNE6H8uQQuVA'; // MrBeast
       const details = await scrapeChannelDetails(channelId);
 
+      expect(details).not.toBeNull();
+      if (!details) return;
       expect(details.thumbnailUrl).toBeDefined();
       expect(typeof details.thumbnailUrl).toBe('string');
       expect(details.thumbnailUrl).toMatch(/^https?:\/\//);

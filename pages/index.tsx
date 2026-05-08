@@ -1,9 +1,15 @@
 import { useState, useEffect } from 'react';
+import { Search, SlidersHorizontal, X, Loader2 } from 'lucide-react';
 import Meta from '@/components/SEO/Meta';
-import styles from '@/styles/Home.module.css';
-import ChannelCardV2 from '@/components/ChannelCard/ChannelCardV2';
+import ChannelCard from '@/components/ChannelCard/ChannelCard';
 import TagFilter from '@/components/TagFilter';
 import NicheFilter from '@/components/NicheFilter';
+import { Button } from '@/components/ui/button';
+import { Input } from '@/components/ui/input';
+import { Card, CardContent } from '@/components/ui/card';
+import { Skeleton } from '@/components/ui/skeleton';
+import { Badge } from '@/components/ui/badge';
+import { cn, formatCount } from '@/lib/utils';
 
 interface Channel {
   id: string;
@@ -15,18 +21,100 @@ interface Channel {
   channel_url: string;
   thumbnail_url: string | null;
   monthsInactive: number | null;
+  social_links?: string | null;
+  niche?: string | null;
+  video_count?: number | null;
 }
 
 interface ApiResponse {
   success: boolean;
   data: Channel[];
-  pagination: {
-    page: number;
-    limit: number;
-    total: number;
-    totalPages: number;
-  };
+  pagination: { page: number; limit: number; total: number; totalPages: number };
 }
+
+interface Preset {
+  id: string;
+  label: string;
+  apply: (s: PresetSetters) => void;
+}
+
+interface PresetSetters {
+  setMinSubs: (n: number) => void;
+  setMaxSubs: (n: number) => void;
+  setLanguage: (s: string) => void;
+  setRegion: (s: string) => void;
+  setInactiveMonths: (n: number) => void;
+  setSelectedTags: (t: string[]) => void;
+  setSelectedNiche: (n: string) => void;
+}
+
+const PRESETS: Preset[] = [
+  {
+    id: 'all',
+    label: 'All channels',
+    apply: s => {
+      s.setMinSubs(0);
+      s.setMaxSubs(10_000_000);
+      s.setLanguage('');
+      s.setRegion('');
+      s.setInactiveMonths(0);
+      s.setSelectedTags([]);
+      s.setSelectedNiche('');
+    },
+  },
+  {
+    id: 'abandoned-large',
+    label: 'Abandoned 100K+',
+    apply: s => {
+      s.setMinSubs(100_000);
+      s.setMaxSubs(10_000_000);
+      s.setLanguage('');
+      s.setRegion('');
+      s.setInactiveMonths(12);
+      s.setSelectedTags([]);
+      s.setSelectedNiche('');
+    },
+  },
+  {
+    id: 'abandoned-medium',
+    label: 'Abandoned 10K–100K',
+    apply: s => {
+      s.setMinSubs(10_000);
+      s.setMaxSubs(100_000);
+      s.setLanguage('');
+      s.setRegion('');
+      s.setInactiveMonths(6);
+      s.setSelectedTags([]);
+      s.setSelectedNiche('');
+    },
+  },
+  {
+    id: 'russian-inactive',
+    label: 'Russian inactive',
+    apply: s => {
+      s.setMinSubs(10_000);
+      s.setMaxSubs(10_000_000);
+      s.setLanguage('ru');
+      s.setRegion('CIS');
+      s.setInactiveMonths(6);
+      s.setSelectedTags([]);
+      s.setSelectedNiche('');
+    },
+  },
+  {
+    id: 'english-inactive',
+    label: 'English inactive',
+    apply: s => {
+      s.setMinSubs(10_000);
+      s.setMaxSubs(10_000_000);
+      s.setLanguage('en');
+      s.setRegion('US');
+      s.setInactiveMonths(6);
+      s.setSelectedTags([]);
+      s.setSelectedNiche('');
+    },
+  },
+];
 
 export default function Home() {
   const [channels, setChannels] = useState<Channel[]>([]);
@@ -34,28 +122,45 @@ export default function Home() {
   const [error, setError] = useState<string | null>(null);
 
   // Filters
+  const [search, setSearch] = useState('');
   const [minSubs, setMinSubs] = useState(0);
-  const [maxSubs, setMaxSubs] = useState(10000000);
+  const [maxSubs, setMaxSubs] = useState(10_000_000);
   const [language, setLanguage] = useState<string>('');
   const [region, setRegion] = useState<string>('');
   const [inactiveMonths, setInactiveMonths] = useState(0);
   const [lastActivityRange, setLastActivityRange] = useState<string>('');
   const [selectedTags, setSelectedTags] = useState<string[]>([]);
   const [selectedNiche, setSelectedNiche] = useState<string>('');
-  const [sortBy, setSortBy] = useState<'subscribers' | 'last_upload_date' | 'niche' | 'tag_count'>('subscribers');
+  const [sortBy, setSortBy] = useState<'subscribers' | 'last_upload_date' | 'niche' | 'tag_count'>(
+    'subscribers',
+  );
   const [order, setOrder] = useState<'ASC' | 'DESC'>('DESC');
   const [page, setPage] = useState(1);
   const [totalPages, setTotalPages] = useState(1);
   const [total, setTotal] = useState(0);
 
-  useEffect(() => {
-    fetchChannels();
-  }, [minSubs, maxSubs, language, region, inactiveMonths, sortBy, order, page, lastActivityRange, selectedTags, selectedNiche]);
+  // Mobile filter drawer toggle
+  const [filtersOpen, setFiltersOpen] = useState(false);
 
-  const fetchChannels = async () => {
+  useEffect(() => {
+    void fetchChannels();
+  }, [
+    minSubs,
+    maxSubs,
+    language,
+    region,
+    inactiveMonths,
+    sortBy,
+    order,
+    page,
+    lastActivityRange,
+    selectedTags,
+    selectedNiche,
+  ]);
+
+  async function fetchChannels() {
     setLoading(true);
     setError(null);
-
     try {
       const params = new URLSearchParams({
         minSubs: minSubs.toString(),
@@ -66,15 +171,11 @@ export default function Home() {
         page: page.toString(),
         limit: '50',
       });
-
-      // Only add language and region if they are selected
       if (language) params.append('language', language);
       if (region) params.append('region', region);
       if (lastActivityRange) params.append('lastActivityRange', lastActivityRange);
       if (selectedNiche) params.append('niche', selectedNiche);
-      if (selectedTags.length > 0) {
-        selectedTags.forEach(tag => params.append('tags', tag));
-      }
+      if (selectedTags.length > 0) selectedTags.forEach(t => params.append('tags', t));
 
       const response = await fetch(`/api/channels?${params}`);
       const data: ApiResponse = await response.json();
@@ -92,87 +193,33 @@ export default function Home() {
     } finally {
       setLoading(false);
     }
+  }
+
+  const presetSetters: PresetSetters = {
+    setMinSubs,
+    setMaxSubs,
+    setLanguage,
+    setRegion,
+    setInactiveMonths,
+    setSelectedTags,
+    setSelectedNiche,
   };
 
-  const handleSort = (column: 'subscribers' | 'last_upload_date' | 'niche' | 'tag_count') => {
-    if (sortBy === column) {
-      setOrder(order === 'DESC' ? 'ASC' : 'DESC');
-    } else {
-      setSortBy(column);
-      setOrder('DESC');
-    }
-    setPage(1);
-  };
+  const activeFilterCount = [
+    minSubs > 0,
+    maxSubs < 10_000_000,
+    !!language,
+    !!region,
+    inactiveMonths > 0,
+    !!lastActivityRange,
+    selectedTags.length > 0,
+    !!selectedNiche,
+  ].filter(Boolean).length;
 
-  const formatNumber = (num: number) => {
-    return num.toLocaleString('en-US');
-  };
-
-  const formatDate = (dateStr: string | null) => {
-    if (!dateStr) return 'Unknown';
-    return new Date(dateStr).toLocaleDateString('en-US', {
-      year: 'numeric',
-      month: 'short',
-      day: 'numeric',
-    });
-  };
-
-  const getInactiveBadgeClass = (months: number | null) => {
-    if (!months) return styles.inactiveBadge;
-    return `${styles.inactiveBadge} ${months >= 12 ? styles.danger : styles.warning}`;
-  };
-
-  // Preset filter combinations
-  const applyPreset = (preset: string) => {
-    setPage(1);
-    switch (preset) {
-      case 'all':
-        setMinSubs(0);
-        setMaxSubs(10000000);
-        setLanguage('');
-        setRegion('');
-        setInactiveMonths(0);
-        setSelectedTags([]);
-        setSelectedNiche('');
-        break;
-      case 'abandoned-large':
-        setMinSubs(100000);
-        setMaxSubs(10000000);
-        setLanguage('');
-        setRegion('');
-        setInactiveMonths(12);
-        setSelectedTags([]);
-        setSelectedNiche('');
-        break;
-      case 'abandoned-medium':
-        setMinSubs(10000);
-        setMaxSubs(100000);
-        setLanguage('');
-        setRegion('');
-        setInactiveMonths(6);
-        setSelectedTags([]);
-        setSelectedNiche('');
-        break;
-      case 'russian-inactive':
-        setMinSubs(10000);
-        setMaxSubs(10000000);
-        setLanguage('ru');
-        setRegion('CIS');
-        setInactiveMonths(6);
-        setSelectedTags([]);
-        setSelectedNiche('');
-        break;
-      case 'english-inactive':
-        setMinSubs(10000);
-        setMaxSubs(10000000);
-        setLanguage('en');
-        setRegion('US');
-        setInactiveMonths(6);
-        setSelectedTags([]);
-        setSelectedNiche('');
-        break;
-    }
-  };
+  // Visible channels — apply client-side title search on top of API filters.
+  const visible = search.trim()
+    ? channels.filter(c => c.title.toLowerCase().includes(search.toLowerCase()))
+    : channels;
 
   return (
     <>
@@ -181,269 +228,440 @@ export default function Home() {
         description="Discover abandoned YouTube channels with 10K-1M+ subscribers. Filter by niche, language, and inactivity. Perfect for channel acquisition and growth opportunities."
         schema={[
           {
-            "@context": "https://schema.org",
-            "@type": "WebApplication",
-            "name": "YouTube Channel Finder",
-            "description": "Discover inactive YouTube channels with high subscriber counts for acquisition opportunities",
-            "url": process.env.NEXT_PUBLIC_BASE_URL || "https://yourdomain.com",
-            "applicationCategory": "BusinessApplication"
-          }
+            '@context': 'https://schema.org',
+            '@type': 'WebApplication',
+            name: 'YouTube Channel Finder',
+            description: 'Discover inactive YouTube channels with high subscriber counts for acquisition opportunities',
+            url: process.env.NEXT_PUBLIC_BASE_URL || 'https://yourdomain.com',
+            applicationCategory: 'BusinessApplication',
+          },
         ]}
       />
 
-      <main className={styles.container}>
-        {/* Header */}
-        <div className={styles.header}>
-          <h1>YouTube Channel Finder</h1>
-        </div>
-
-        <p className={styles.description}>
-          Discover undervalued YouTube channels worldwide with high subscriber counts but inactive uploads. Perfect for acquisition opportunities.
-        </p>
-
-        {/* Filters */}
-        <div className={styles.presets}>
-          <button onClick={() => applyPreset('all')} className={styles.presetBtn}>
-            All Channels
-          </button>
-          <button onClick={() => applyPreset('abandoned-large')} className={styles.presetBtn}>
-            Abandoned 100K+
-          </button>
-          <button onClick={() => applyPreset('abandoned-medium')} className={styles.presetBtn}>
-            Abandoned 10K-100K
-          </button>
-          <button onClick={() => applyPreset('russian-inactive')} className={styles.presetBtn}>
-            Russian Inactive
-          </button>
-          <button onClick={() => applyPreset('english-inactive')} className={styles.presetBtn}>
-            English Inactive
-          </button>
-        </div>
-
-        <div className={styles.filters}>
-          <div className={styles.filterGroup}>
-            <label>Min Subscribers</label>
-            <input
-              type="number"
-              value={minSubs}
-              onChange={(e) => { setMinSubs(Number(e.target.value)); setPage(1); }}
-            />
-          </div>
-
-          <div className={styles.filterGroup}>
-            <label>Max Subscribers</label>
-            <input
-              type="number"
-              value={maxSubs}
-              onChange={(e) => { setMaxSubs(Number(e.target.value)); setPage(1); }}
-            />
-          </div>
-
-          <div className={styles.filterGroup}>
-            <label>Language</label>
-            <select
-              value={language}
-              onChange={(e) => { setLanguage(e.target.value); setPage(1); }}
-            >
-              <option value="">All Languages</option>
-              <option value="en">English</option>
-              <option value="ru">Russian</option>
-              <option value="es">Spanish</option>
-              <option value="de">German</option>
-              <option value="fr">French</option>
-              <option value="ja">Japanese</option>
-              <option value="ko">Korean</option>
-              <option value="zh">Chinese</option>
-            </select>
-          </div>
-
-          <div className={styles.filterGroup}>
-            <label>Region</label>
-            <select
-              value={region}
-              onChange={(e) => { setRegion(e.target.value); setPage(1); }}
-            >
-              <option value="">All Regions</option>
-              <option value="US">United States</option>
-              <option value="UK">United Kingdom</option>
-              <option value="CIS">CIS (Russia, Ukraine, etc.)</option>
-              <option value="EU">European Union</option>
-              <option value="Asia">Asia</option>
-            </select>
-          </div>
-
-          <div className={styles.filterGroup}>
-            <label>Inactive For</label>
-            <select
-              value={inactiveMonths}
-              onChange={(e) => { setInactiveMonths(Number(e.target.value)); setPage(1); }}
-            >
-              <option value={0}>Any (including active)</option>
-              <option value={3}>3+ months</option>
-              <option value={6}>6+ months</option>
-              <option value={12}>12+ months</option>
-              <option value={24}>24+ months</option>
-            </select>
-          </div>
-
-          <div className={styles.filterGroup}>
-            <label>Last Activity Range</label>
-            <select
-              value={lastActivityRange}
-              onChange={(e) => { setLastActivityRange(e.target.value); setPage(1); }}
-            >
-              <option value="">All Channels</option>
-              <option value="1-3mo">1-3 months ago</option>
-              <option value="3-6mo">3-6 months ago</option>
-              <option value="6-12mo">6-12 months ago</option>
-              <option value="12-24mo">12-24 months ago</option>
-              <option value="24+mo">24+ months ago (dormant)</option>
-            </select>
-          </div>
-
-          <div className={styles.filterGroup}>
-            <label>Sort By</label>
-            <select
-              value={sortBy}
-              onChange={(e) => { setSortBy(e.target.value as any); setPage(1); }}
-            >
-              <option value="subscribers">Subscribers</option>
-              <option value="last_upload_date">Last Upload Date</option>
-              <option value="niche">Niche</option>
-              <option value="tag_count">Tag Count</option>
-            </select>
-          </div>
-
-          <div className={styles.filterGroup}>
-            <label>Order</label>
-            <select
-              value={order}
-              onChange={(e) => { setOrder(e.target.value as 'ASC' | 'DESC'); setPage(1); }}
-            >
-              <option value="DESC">Descending</option>
-              <option value="ASC">Ascending</option>
-            </select>
-          </div>
-        </div>
-
-        {/* Tag and Niche Filters */}
-        <div className={styles.advancedFilters}>
-          <TagFilter
-            selectedTags={selectedTags}
-            onTagsChange={(tags) => { setSelectedTags(tags); setPage(1); }}
+      <div className="min-h-screen bg-background text-foreground">
+        {/* Hero ----------------------------------------------------------- */}
+        <header className="relative overflow-hidden border-b border-border/60">
+          <div
+            className="pointer-events-none absolute inset-0 -z-10 opacity-30"
+            style={{
+              backgroundImage:
+                'radial-gradient(60% 60% at 30% 20%, hsl(var(--primary)/0.25), transparent), radial-gradient(40% 40% at 80% 80%, hsl(var(--primary)/0.15), transparent)',
+            }}
+            aria-hidden
           />
-          <NicheFilter
-            selectedNiche={selectedNiche}
-            onNicheChange={(niche) => { setSelectedNiche(niche); setPage(1); }}
-          />
-        </div>
+          <div className="container py-12 sm:py-16 lg:py-20">
+            <Badge variant="secondary" className="mb-4">
+              {formatCount(total)} channels indexed
+            </Badge>
+            <h1 className="text-balance text-4xl font-bold tracking-tight sm:text-5xl lg:text-6xl">
+              Find inactive YouTube channels for acquisition
+            </h1>
+            <p className="mt-4 max-w-2xl text-lg text-muted-foreground">
+              Discover undervalued channels worldwide with high subscriber counts but stalled
+              uploads. Perfect for acquisition, growth, and revival.
+            </p>
 
-        {/* Results Header */}
-        <div className={styles.resultsHeader}>
-          <div className={styles.resultsCount}>
-            {loading ? 'Loading...' : `Found ${formatNumber(total)} channels`}
-          </div>
-        </div>
-
-        {/* Error Message */}
-        {error && (
-          <div className={styles.error}>
-            {error}
-          </div>
-        )}
-
-        {/* Channel Grid */}
-        <div className={styles.channelGrid}>
-          {loading ? (
-            // Loading Skeletons
-            Array.from({ length: 6 }).map((_, i) => (
-              <ChannelCardV2
-                key={i}
-                channel={{
-                  id: `skeleton-${i}`,
-                  title: 'Loading...',
-                  subscribers: 0,
-                  language: null,
-                  region: null,
-                  last_upload_date: null,
-                  channel_url: '#',
-                  thumbnail_url: null,
-                  monthsInactive: null,
-                }}
-                index={i}
-              />
-            ))
-          ) : channels.length === 0 ? (
-            <div className={styles.emptyState}>
-              <p>No channels found. Try adjusting your filters.</p>
+            <div className="mt-8 flex flex-col gap-3 sm:flex-row sm:items-center">
+              <div className="relative flex-1 max-w-xl">
+                <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+                <Input
+                  type="search"
+                  placeholder="Search loaded channels by title…"
+                  value={search}
+                  onChange={e => setSearch(e.target.value)}
+                  className="pl-10"
+                  aria-label="Search channels by title"
+                />
+              </div>
+              <Button
+                variant="outline"
+                onClick={() => setFiltersOpen(v => !v)}
+                aria-expanded={filtersOpen}
+                className="gap-2 sm:hidden"
+              >
+                <SlidersHorizontal className="h-4 w-4" />
+                Filters
+                {activeFilterCount > 0 && (
+                  <Badge variant="default" className="ml-1 h-5 px-1.5 text-[10px]">
+                    {activeFilterCount}
+                  </Badge>
+                )}
+              </Button>
             </div>
-          ) : (
-            channels.map((channel, index) => (
-              <ChannelCardV2
-                key={channel.id}
-                channel={channel}
-                index={index}
-              />
-            ))
-          )}
-        </div>
 
-        {/* Pagination */}
-        {totalPages > 1 && !loading && (
-          <div className={styles.pagination}>
-            <button
-              onClick={() => setPage(p => Math.max(1, p - 1))}
-              disabled={page === 1}
+            {/* Presets */}
+            <div className="mt-6 flex flex-wrap gap-2">
+              {PRESETS.map(p => (
+                <Button
+                  key={p.id}
+                  size="sm"
+                  variant="secondary"
+                  onClick={() => {
+                    p.apply(presetSetters);
+                    setPage(1);
+                  }}
+                >
+                  {p.label}
+                </Button>
+              ))}
+            </div>
+          </div>
+        </header>
+
+        {/* Body — sidebar filters + grid ---------------------------------- */}
+        <main className="container py-8">
+          <div className="flex flex-col gap-8 lg:flex-row">
+            {/* Filter sidebar (desktop), drawer (mobile) */}
+            <aside
+              className={cn(
+                'lg:w-72 lg:shrink-0',
+                'lg:block',
+                filtersOpen ? 'block' : 'hidden lg:block',
+              )}
             >
-              Previous
-            </button>
-            <span>
-              Page {page} of {totalPages}
-            </span>
-            <button
-              onClick={() => setPage(p => Math.min(totalPages, p + 1))}
-              disabled={page === totalPages}
-            >
-              Next
-            </button>
-          </div>
-        )}
+              <Card>
+                <CardContent className="space-y-5 p-5">
+                  <div className="flex items-center justify-between">
+                    <h2 className="text-sm font-semibold uppercase tracking-wide text-muted-foreground">
+                      Filters
+                    </h2>
+                    {activeFilterCount > 0 && (
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        onClick={() => {
+                          PRESETS[0].apply(presetSetters);
+                          setLastActivityRange('');
+                          setPage(1);
+                        }}
+                        className="h-7 gap-1 text-xs"
+                      >
+                        <X className="h-3 w-3" /> Clear
+                      </Button>
+                    )}
+                  </div>
 
-        {/* FAQ Section */}
-        <div className={styles.faqSection}>
-          <h2>Frequently Asked Questions</h2>
-          <div className={styles.faqGrid}>
-            <div className={styles.faqItem}>
-              <h3>What is an inactive YouTube channel?</h3>
-              <p>
-                An inactive YouTube channel is one that hasn't uploaded new content for an extended period (typically 3+ months).
-                These channels may be available for acquisition or collaboration opportunities.
-              </p>
-            </div>
-            <div className={styles.faqItem}>
-              <h3>How often is the channel data updated?</h3>
-              <p>
-                Our database is updated daily with the latest subscriber counts, upload dates, and channel information.
-                We monitor thousands of channels to ensure you have access to the most current data.
-              </p>
-            </div>
-            <div className={styles.faqItem}>
-              <h3>How do I find channels in a specific niche?</h3>
-              <p>
-                Use our advanced filters to narrow down by subscriber count, language, region, and inactivity period.
-                You can also browse by category to find channels that match your target audience.
-              </p>
-            </div>
-          </div>
-        </div>
+                  <FilterField label="Min subscribers">
+                    <Input
+                      type="number"
+                      value={minSubs}
+                      min={0}
+                      onChange={e => {
+                        setMinSubs(Number(e.target.value));
+                        setPage(1);
+                      }}
+                    />
+                  </FilterField>
 
-        {/* Footer */}
-        <div className={styles.footer}>
-          <p>
-            Free YouTube channel discovery tool - Find inactive channels for acquisition opportunities
-          </p>
-        </div>
-      </main>
+                  <FilterField label="Max subscribers">
+                    <Input
+                      type="number"
+                      value={maxSubs}
+                      min={0}
+                      onChange={e => {
+                        setMaxSubs(Number(e.target.value));
+                        setPage(1);
+                      }}
+                    />
+                  </FilterField>
+
+                  <FilterField label="Language">
+                    <NativeSelect
+                      value={language}
+                      onChange={v => {
+                        setLanguage(v);
+                        setPage(1);
+                      }}
+                      options={[
+                        { value: '', label: 'All languages' },
+                        { value: 'en', label: 'English' },
+                        { value: 'ru', label: 'Russian' },
+                        { value: 'es', label: 'Spanish' },
+                        { value: 'de', label: 'German' },
+                        { value: 'fr', label: 'French' },
+                        { value: 'ja', label: 'Japanese' },
+                        { value: 'ko', label: 'Korean' },
+                        { value: 'zh', label: 'Chinese' },
+                        { value: 'hi', label: 'Hindi' },
+                        { value: 'ar', label: 'Arabic' },
+                      ]}
+                    />
+                  </FilterField>
+
+                  <FilterField label="Region">
+                    <NativeSelect
+                      value={region}
+                      onChange={v => {
+                        setRegion(v);
+                        setPage(1);
+                      }}
+                      options={[
+                        { value: '', label: 'All regions' },
+                        { value: 'US', label: 'United States' },
+                        { value: 'UK', label: 'United Kingdom' },
+                        { value: 'CIS', label: 'CIS (RU/UA/BY)' },
+                        { value: 'EU', label: 'European Union' },
+                        { value: 'Asia', label: 'Asia' },
+                      ]}
+                    />
+                  </FilterField>
+
+                  <FilterField label="Inactive for">
+                    <NativeSelect
+                      value={String(inactiveMonths)}
+                      onChange={v => {
+                        setInactiveMonths(Number(v));
+                        setPage(1);
+                      }}
+                      options={[
+                        { value: '0', label: 'Any (incl. active)' },
+                        { value: '3', label: '3+ months' },
+                        { value: '6', label: '6+ months' },
+                        { value: '12', label: '12+ months' },
+                        { value: '24', label: '24+ months' },
+                      ]}
+                    />
+                  </FilterField>
+
+                  <FilterField label="Last activity range">
+                    <NativeSelect
+                      value={lastActivityRange}
+                      onChange={v => {
+                        setLastActivityRange(v);
+                        setPage(1);
+                      }}
+                      options={[
+                        { value: '', label: 'All channels' },
+                        { value: '1-3mo', label: '1–3 months ago' },
+                        { value: '3-6mo', label: '3–6 months ago' },
+                        { value: '6-12mo', label: '6–12 months ago' },
+                        { value: '12-24mo', label: '12–24 months ago' },
+                        { value: '24+mo', label: '24+ months (dormant)' },
+                      ]}
+                    />
+                  </FilterField>
+
+                  <FilterField label="Sort by">
+                    <NativeSelect
+                      value={sortBy}
+                      onChange={v => {
+                        setSortBy(v as typeof sortBy);
+                        setPage(1);
+                      }}
+                      options={[
+                        { value: 'subscribers', label: 'Subscribers' },
+                        { value: 'last_upload_date', label: 'Last upload' },
+                        { value: 'niche', label: 'Niche' },
+                        { value: 'tag_count', label: 'Tag count' },
+                      ]}
+                    />
+                  </FilterField>
+
+                  <FilterField label="Order">
+                    <NativeSelect
+                      value={order}
+                      onChange={v => {
+                        setOrder(v as 'ASC' | 'DESC');
+                        setPage(1);
+                      }}
+                      options={[
+                        { value: 'DESC', label: 'Descending' },
+                        { value: 'ASC', label: 'Ascending' },
+                      ]}
+                    />
+                  </FilterField>
+
+                  <div className="space-y-3 border-t border-border/60 pt-4">
+                    <TagFilter
+                      selectedTags={selectedTags}
+                      onTagsChange={tags => {
+                        setSelectedTags(tags);
+                        setPage(1);
+                      }}
+                    />
+                    <NicheFilter
+                      selectedNiche={selectedNiche}
+                      onNicheChange={niche => {
+                        setSelectedNiche(niche);
+                        setPage(1);
+                      }}
+                    />
+                  </div>
+                </CardContent>
+              </Card>
+            </aside>
+
+            {/* Results */}
+            <section className="flex-1 min-w-0">
+              <div className="mb-4 flex items-center justify-between">
+                <p className="text-sm text-muted-foreground">
+                  {loading ? (
+                    <span className="inline-flex items-center gap-2">
+                      <Loader2 className="h-3.5 w-3.5 animate-spin" /> Loading…
+                    </span>
+                  ) : (
+                    <>
+                      Showing <span className="font-semibold text-foreground">{visible.length}</span> of{' '}
+                      <span className="font-semibold text-foreground">{formatCount(total)}</span> channels
+                    </>
+                  )}
+                </p>
+              </div>
+
+              {error && (
+                <div
+                  role="alert"
+                  className="mb-4 rounded-md border border-destructive/50 bg-destructive/10 p-4 text-sm text-destructive"
+                >
+                  {error}
+                </div>
+              )}
+
+              {loading ? (
+                <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
+                  {Array.from({ length: 8 }).map((_, i) => (
+                    <Card key={i}>
+                      <Skeleton className="aspect-square w-full rounded-t-xl rounded-b-none" />
+                      <CardContent className="space-y-3 p-4">
+                        <Skeleton className="h-4 w-3/4" />
+                        <Skeleton className="h-4 w-1/2" />
+                        <div className="flex gap-2">
+                          <Skeleton className="h-5 w-12" />
+                          <Skeleton className="h-5 w-12" />
+                        </div>
+                      </CardContent>
+                    </Card>
+                  ))}
+                </div>
+              ) : visible.length === 0 ? (
+                <Card>
+                  <CardContent className="py-16 text-center">
+                    <p className="text-base font-medium">No channels match your filters.</p>
+                    <p className="mt-1 text-sm text-muted-foreground">
+                      Try widening your subscriber range or clearing filters.
+                    </p>
+                    <Button
+                      variant="outline"
+                      className="mt-4"
+                      onClick={() => {
+                        PRESETS[0].apply(presetSetters);
+                        setPage(1);
+                      }}
+                    >
+                      Reset filters
+                    </Button>
+                  </CardContent>
+                </Card>
+              ) : (
+                <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
+                  {visible.map((channel, index) => (
+                    <ChannelCard key={channel.id} channel={channel} index={index} />
+                  ))}
+                </div>
+              )}
+
+              {/* Pagination */}
+              {totalPages > 1 && !loading && (
+                <nav
+                  aria-label="Pagination"
+                  className="mt-8 flex items-center justify-center gap-3"
+                >
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={() => setPage(p => Math.max(1, p - 1))}
+                    disabled={page === 1}
+                  >
+                    Previous
+                  </Button>
+                  <span className="text-sm text-muted-foreground">
+                    Page <span className="font-semibold text-foreground">{page}</span> of{' '}
+                    <span className="font-semibold text-foreground">{totalPages}</span>
+                  </span>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={() => setPage(p => Math.min(totalPages, p + 1))}
+                    disabled={page === totalPages}
+                  >
+                    Next
+                  </Button>
+                </nav>
+              )}
+            </section>
+          </div>
+
+          {/* FAQ */}
+          <section className="mt-20 grid gap-6 md:grid-cols-3">
+            <FAQItem
+              q="What is an inactive YouTube channel?"
+              a="An inactive channel hasn't uploaded new content for an extended period (typically 3+ months). These channels may be available for acquisition or collaboration."
+            />
+            <FAQItem
+              q="How often is the channel data updated?"
+              a="Our database is refreshed via a quota-free Innertube + RSS pipeline. Subscriber counts and upload dates stay current within days."
+            />
+            <FAQItem
+              q="How do I find channels in a specific niche?"
+              a="Use the niche, tag, and language filters in the sidebar. Combine with subscriber range to narrow to your target audience."
+            />
+          </section>
+        </main>
+
+        <footer className="border-t border-border/60">
+          <div className="container py-8 text-center text-sm text-muted-foreground">
+            Free YouTube channel discovery — find inactive channels for acquisition opportunities.
+          </div>
+        </footer>
+      </div>
     </>
+  );
+}
+
+// ----- helpers ------------------------------------------------------------
+
+function FilterField({ label, children }: { label: string; children: React.ReactNode }) {
+  return (
+    <label className="block space-y-1.5">
+      <span className="text-xs font-medium text-muted-foreground">{label}</span>
+      {children}
+    </label>
+  );
+}
+
+interface NativeSelectProps {
+  value: string;
+  onChange: (v: string) => void;
+  options: Array<{ value: string; label: string }>;
+}
+
+function NativeSelect({ value, onChange, options }: NativeSelectProps) {
+  return (
+    <select
+      value={value}
+      onChange={e => onChange(e.target.value)}
+      className={cn(
+        'flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm',
+        'ring-offset-background focus-visible:outline-none focus-visible:ring-2',
+        'focus-visible:ring-ring focus-visible:ring-offset-2',
+      )}
+    >
+      {options.map(o => (
+        <option key={o.value} value={o.value}>
+          {o.label}
+        </option>
+      ))}
+    </select>
+  );
+}
+
+function FAQItem({ q, a }: { q: string; a: string }) {
+  return (
+    <Card>
+      <CardContent className="p-6">
+        <h3 className="font-semibold">{q}</h3>
+        <p className="mt-2 text-sm text-muted-foreground">{a}</p>
+      </CardContent>
+    </Card>
   );
 }
