@@ -121,7 +121,10 @@ export function extractSocialLinks(description: string): string | null {
     /(?:https?:\/\/)?(?:www\.)?discord\.gg\/[\w]+/gi,
     /(?:https?:\/\/)?(?:www\.)?patreon\.com\/[\w]+/gi,
     /(?:https?:\/\/)?t\.me\/[\w]+/gi,
-    /(?:https?:\/\/)?(?:www\.)?youtube\.com\/[@\w.]+/gi,
+    // Match canonical youtube.com handles ("@foo") or /channel/ paths only.
+    // Do NOT match /redirect URLs — those are YouTube's external-link wrappers
+    // that just bloat the saved JSON with tracking params.
+    /(?:https?:\/\/)?(?:www\.)?youtube\.com\/(?:@[\w.-]+|channel\/UC[\w-]{22})/gi,
   ];
   const links: string[] = [];
   for (const re of patterns) {
@@ -129,6 +132,22 @@ export function extractSocialLinks(description: string): string | null {
     if (matches) links.push(...matches);
   }
   return links.length > 0 ? JSON.stringify(Array.from(new Set(links))) : null;
+}
+
+/**
+ * Strip YouTube's `/redirect` wrapper to get the underlying URL.
+ * Ex: "https://www.youtube.com/redirect?...&q=https%3A%2F%2Fexample.com" -> "https://example.com"
+ */
+function unwrapYoutubeRedirect(url: string): string {
+  if (!url.includes('youtube.com/redirect')) return url;
+  try {
+    const u = new URL(url);
+    const q = u.searchParams.get('q');
+    if (q) return decodeURIComponent(q);
+  } catch {
+    // fall through
+  }
+  return url;
 }
 
 /**
@@ -227,14 +246,21 @@ async function persistEnriched(
   original: Channel,
   data: NoApiChannelFull,
 ): Promise<void> {
-  // Build social_links: prefer description-extracted, augment with about-tab links
-  const socialFromDesc = extractSocialLinks(data.description ?? '') ?? null;
-  let socialLinks = socialFromDesc;
-  if (data.links.length > 0) {
-    const merged = new Set<string>(socialFromDesc ? JSON.parse(socialFromDesc) : []);
-    for (const l of data.links) merged.add(l.url);
-    socialLinks = JSON.stringify(Array.from(merged));
+  // Build social_links: prefer the about-tab's clean URLs; augment with anything
+  // we find in the description that the about tab didn't surface. Unwrap any
+  // youtube.com/redirect wrappers to the actual destination URL.
+  const fromAbout = data.links.map(l => unwrapYoutubeRedirect(l.url));
+  const fromDescRaw = extractSocialLinks(data.description ?? '');
+  const fromDesc: string[] = fromDescRaw ? JSON.parse(fromDescRaw) : [];
+  const merged = new Set<string>([
+    ...fromAbout.map(u => unwrapYoutubeRedirect(u)),
+    ...fromDesc.map(u => unwrapYoutubeRedirect(u)),
+  ]);
+  // Drop any leftover redirects (unwrap may fail on malformed inputs)
+  for (const u of Array.from(merged)) {
+    if (u.includes('youtube.com/redirect')) merged.delete(u);
   }
+  const socialLinks = merged.size > 0 ? JSON.stringify(Array.from(merged)) : null;
 
   // Language: prefer existing → derive from description+title+keywords
   const langProbe = [data.title, data.description, data.keywords].filter(Boolean).join(' ');
