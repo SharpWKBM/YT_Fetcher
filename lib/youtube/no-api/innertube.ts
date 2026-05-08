@@ -210,12 +210,15 @@ export function parseInnertubePayload(channelId: string, data: any): NoApiChanne
     ?? extractStatPart(ph, /video/i)
     ?? null;
 
-  // Avatar — try multiple paths, pick highest resolution
-  const avatarThumbs: any[] =
-    meta?.avatar?.thumbnails
-    ?? c4?.avatar?.thumbnails
-    ?? ph?.content?.pageHeaderViewModel?.image?.decoratedAvatarViewModel?.avatar?.avatarViewModel?.image?.sources
-    ?? [];
+  // Avatar — combine every source we know about and pick the highest resolution
+  // overall. Different shapes may carry different sizes (e.g. metadata only has
+  // a tiny 88px square while c4 carries an 800px one).
+  const avatarThumbs: any[] = [
+    ...(meta?.avatar?.thumbnails ?? []),
+    ...(c4?.avatar?.thumbnails ?? []),
+    ...(ph?.content?.pageHeaderViewModel?.image?.decoratedAvatarViewModel?.avatar?.avatarViewModel?.image
+      ?.sources ?? []),
+  ];
   const avatarUrl = pickLargestThumbnail(avatarThumbs);
 
   // Banner
